@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>Framelet</string>
+    <key>CFBundleIdentifier</key><string>app.framelet.recorder</string>
+    <key>CFBundleName</key><string>Framelet</string>
+    <key>CFBundleDisplayName</key><string>Framelet</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleIconFile</key><string>Framelet</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSScreenCaptureUsageDescription</key><string>Framelet records only the screen region you select to create a GIF.</string>
+    <key>NSDesktopFolderUsageDescription</key><string>Framelet saves your exported GIFs to the Desktop when it is selected as the output folder.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>Framelet saves exported GIFs here when you select this output folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>Framelet saves exported GIFs here when you select this output folder.</string>
+</dict>
+</plist>

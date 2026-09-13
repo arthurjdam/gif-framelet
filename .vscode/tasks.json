@@ -1,0 +1,40 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Framelet.app",
+            "type": "process",
+            "command": "zsh",
+            "args": ["scripts/build-app.sh"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "Check core behavior",
+            "type": "process",
+            "command": "swift",
+            "args": ["run", "FrameletChecks"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Check native app and GIF export",
+            "type": "process",
+            "command": "${workspaceFolder}/dist/Framelet.app/Contents/MacOS/Framelet",
+            "args": ["--self-test"],
+            "dependsOn": "Build Framelet.app",
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Launch Framelet",
+            "type": "process",
+            "command": "open",
+            "args": ["${workspaceFolder}/dist/Framelet.app"],
+            "dependsOn": "Build Framelet.app",
+            "problemMatcher": []
+        }
+    ]
+}
