@@ -77,8 +77,6 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
         return try await withCheckedThrowingContinuation { completion = $0 }
     }
 
-    nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {}
-
     nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
         Task { @MainActor [weak self] in self?.finishedRecording() }
     }

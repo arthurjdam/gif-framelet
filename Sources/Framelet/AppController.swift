@@ -14,7 +14,6 @@ final class AppController: ObservableObject {
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
     private var recordingOptions: ExportOptions?
-    private var observers: [NSObjectProtocol] = []
     @Published private(set) var phase = Phase.idle
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
@@ -44,15 +43,11 @@ final class AppController: ObservableObject {
         selector.onCancel = { [weak self] in self?.cancelSelection() }
         selector.onRecord = { [weak self] region, screen in self?.start(region: region, screen: screen) }
         do { try shortcut.register(settings.shortcut) } catch { errorMessage = error.localizedDescription }
-        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.displayConfigurationChanged() }
-        })
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                if self?.phase == .recording { self?.stop() }
-                if self?.phase == .selecting { self?.cancelSelection() }
-            }
-        })
+        let interrupt: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.interruptCapture() }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main, using: interrupt)
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: interrupt)
         restoreRecovery()
         if !ensurePermission() { showSettings() }
     }
@@ -129,9 +124,9 @@ final class AppController: ObservableObject {
                 elapsed = 0
                 startedAt = Date()
                 let limit = settings.maximumDuration
-                let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
                     MainActor.assumeIsolated {
-                        guard let self, let startedAt = self.startedAt else { return }
+                        guard let startedAt = self.startedAt else { return }
                         self.elapsed = Date().timeIntervalSince(startedAt)
                         if self.elapsed >= Double(limit) { self.stop() }
                     }
@@ -186,10 +181,10 @@ final class AppController: ObservableObject {
                                     quality: selected.quality, fast: selected.fast, loops: selected.loops)
         exportTask = Task {
             do {
-                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { [weak self] progress, stage in
+                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { progress, stage in
                     await MainActor.run {
-                        self?.exportProgress = progress
-                        self?.exportStage = stage
+                        self.exportProgress = progress
+                        self.exportStage = stage
                     }
                 }
                 lastExport = url
@@ -246,7 +241,7 @@ final class AppController: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "recoveryMovie")
     }
 
-    private func displayConfigurationChanged() {
+    private func interruptCapture() {
         if phase == .selecting { cancelSelection() }
         if phase == .recording { stop() }
     }
@@ -315,15 +310,5 @@ final class AppController: ObservableObject {
         NSApp.activate()
         if alert.runModal() == .alertSecondButtonReturn { stop() }
         return false
-    }
-
-    func shutdown() {
-        shortcut.unregister()
-        selector.close()
-        timer?.invalidate()
-        for observer in observers {
-            NotificationCenter.default.removeObserver(observer)
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
-        }
     }
 }

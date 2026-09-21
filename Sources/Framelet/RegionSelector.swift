@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import RecorderCore
 
 @MainActor
@@ -83,7 +84,7 @@ private final class SelectionPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, [36, 49, 53, 76].contains(event.keyCode),
+        if event.type == .keyDown, [kVK_Return, kVK_Space, kVK_Escape, kVK_ANSI_KeypadEnter].contains(Int(event.keyCode)),
            event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             selectionView.keyDown(with: event)
             return
@@ -282,9 +283,9 @@ private final class SelectionView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 53: cancel()
-        case 36, 49, 76: record()
+        switch Int(event.keyCode) {
+        case kVK_Escape: cancel()
+        case kVK_Return, kVK_Space, kVK_ANSI_KeypadEnter: record()
         default: super.keyDown(with: event)
         }
     }
@@ -319,28 +320,28 @@ extension RegionSelector {
             view.mouseUp(with: event(.leftMouseUp, end))
         }
 
-        func key(_ code: UInt16) {
+        func key(_ code: Int) {
             view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                                windowNumber: window.windowNumber, context: nil, characters: " ",
-                                               charactersIgnoringModifiers: " ", isARepeat: false, keyCode: code)!)
+                                               charactersIgnoringModifiers: " ", isARepeat: false, keyCode: UInt16(code))!)
         }
 
         drag(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 500, y: 350))
-        key(49)
+        key(kVK_Space)
         guard recorded == CGRect(x: 100, y: 100, width: 400, height: 250) else {
             throw RecorderError.message("Drawing a selection or the Space shortcut failed")
         }
         drag(from: CGPoint(x: 300, y: 200), to: CGPoint(x: 350, y: 225))
-        key(36)
+        key(kVK_Return)
         guard recorded == CGRect(x: 150, y: 125, width: 400, height: 250) else {
             throw RecorderError.message("Moving a selection or the Return shortcut failed")
         }
         drag(from: CGPoint(x: 150, y: 125), to: CGPoint(x: 140, y: 105))
-        key(36)
+        key(kVK_Return)
         guard recorded == CGRect(x: 140, y: 105, width: 410, height: 270) else {
             throw RecorderError.message("Resizing a corner handle failed")
         }
-        key(53)
+        key(kVK_Escape)
         guard cancelled else { throw RecorderError.message("Escape must cancel selection") }
 
         func snapshot(_ name: String) throws {
@@ -374,7 +375,7 @@ extension RegionSelector {
         try snapshot("selection.png")
         recorded = nil
         view.setRecording(dimOutside: true)
-        key(49)
+        key(kVK_Space)
         guard recorded == nil else { throw RecorderError.message("Recording overlay must not restart capture") }
         try snapshot("recording.png")
         print("PASS: draw, move, resize, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")

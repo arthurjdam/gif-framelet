@@ -29,10 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         controller.canQuit() ? .terminateNow : .terminateCancel
     }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        controller.shutdown()
-    }
 }
 
 private struct MenuBarLabel: View {

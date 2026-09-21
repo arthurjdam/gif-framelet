@@ -1,4 +1,5 @@
 import SwiftUI
+import Carbon.HIToolbox
 
 struct SettingsView: View {
     @ObservedObject var controller: AppController
@@ -153,7 +154,7 @@ private final class ShortcutButton: NSButton {
         onBegin?()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { self.finish(nil); return nil }
+            if Int(event.keyCode) == kVK_Escape { self.finish(nil); return nil }
             guard let shortcut = Shortcut(event: event) else { NSSound.beep(); return nil }
             self.finish(shortcut)
             return nil

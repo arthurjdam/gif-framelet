@@ -24,27 +24,20 @@ final class AppSettings: ObservableObject {
             "loops": true, "showsCursor": true, "dimOutside": true,
             "maximumDuration": 60, "revealAfterExport": true
         ])
-        fps = min(max(defaults.integer(forKey: "fps"), 5), 30)
-        maximumWidth = min(max(defaults.integer(forKey: "maximumWidth"), 320), 2560)
-        quality = min(max(defaults.double(forKey: "quality"), 20), 100)
+        fps = defaults.integer(forKey: "fps")
+        maximumWidth = defaults.integer(forKey: "maximumWidth")
+        quality = defaults.double(forKey: "quality")
         fast = defaults.bool(forKey: "fast")
         loops = defaults.bool(forKey: "loops")
         showsCursor = defaults.bool(forKey: "showsCursor")
         dimOutside = defaults.bool(forKey: "dimOutside")
         maximumDuration = min(max(defaults.integer(forKey: "maximumDuration"), 15), 120)
         revealAfterExport = defaults.bool(forKey: "revealAfterExport")
-        if let data = defaults.data(forKey: "outputBookmark") {
+        outputDirectory = defaults.data(forKey: "outputBookmark").flatMap {
             var stale = false
-            outputDirectory = (try? URL(resolvingBookmarkData: data, options: [.withoutUI], bookmarkDataIsStale: &stale))
-                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
-        } else {
-            outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
-        }
-        if let data = defaults.data(forKey: "shortcut"), let saved = try? JSONDecoder().decode(Shortcut.self, from: data) {
-            shortcut = saved
-        } else {
-            shortcut = .defaultShortcut
-        }
+            return try? URL(resolvingBookmarkData: $0, options: [.withoutUI], bookmarkDataIsStale: &stale)
+        } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        shortcut = defaults.data(forKey: "shortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultShortcut
     }
 
     var exportOptions: ExportOptions {
@@ -78,13 +71,9 @@ struct Shortcut: Codable, Equatable {
         if modifiers & UInt32(cmdKey) != 0 { result += "\u{2318}" }
         return result + key
     }
+}
 
-    init(keyCode: UInt32, modifiers: UInt32, key: String) {
-        self.keyCode = keyCode
-        self.modifiers = modifiers
-        self.key = key
-    }
-
+extension Shortcut {
     init?(event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard !flags.intersection([.command, .control, .option]).isEmpty,
@@ -95,14 +84,14 @@ struct Shortcut: Codable, Equatable {
         if flags.contains(.shift) { modifiers |= UInt32(shiftKey) }
         if flags.contains(.option) { modifiers |= UInt32(optionKey) }
         if flags.contains(.control) { modifiers |= UInt32(controlKey) }
-        switch event.keyCode {
-        case 49: key = "Space"
-        case 36: key = "Return"
-        case 48: key = "Tab"
-        case 123: key = "\u{2190}"
-        case 124: key = "\u{2192}"
-        case 125: key = "\u{2193}"
-        case 126: key = "\u{2191}"
+        switch Int(event.keyCode) {
+        case kVK_Space: key = "Space"
+        case kVK_Return: key = "Return"
+        case kVK_Tab: key = "Tab"
+        case kVK_LeftArrow: key = "\u{2190}"
+        case kVK_RightArrow: key = "\u{2192}"
+        case kVK_DownArrow: key = "\u{2193}"
+        case kVK_UpArrow: key = "\u{2191}"
         default: key = text.uppercased()
         }
     }
