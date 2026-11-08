@@ -93,7 +93,7 @@ struct SettingsView: View {
                         if let message = controller.errorMessage {
                             Button("Show Error...", systemImage: "exclamationmark.triangle") { controller.showError(message) }
                         }
-                        if controller.recoveryMovie != nil && controller.phase != .exporting {
+                        if controller.recoveryMovie != nil && !controller.isBusy {
                             Button("Retry Export", systemImage: "arrow.clockwise") { controller.retryExport() }
                             Button("Reveal Original Recording", systemImage: "film") { controller.revealRecovery() }
                         }

@@ -69,6 +69,13 @@ enum SelfChecks {
         try require(frames >= 290 && frames <= 301, "Long GIF must contain its frames; got \(frames)")
         print("PASS: 10 s @ 30 fps export (\(frames) frames) in \(seconds(total)), frame extraction \(seconds((extracted.withLock { $0 } ?? start) - start))")
 
+        try require(RecoveryInfo.read(besides: movie) == nil, "A missing recovery sidecar must read as nil")
+        try RecoveryInfo(fps: 25).write(besides: movie)
+        try require(RecoveryInfo.read(besides: movie) == RecoveryInfo(fps: 25), "Recovery sidecar must round-trip the capture fps")
+        try Data("not json".utf8).write(to: RecoveryInfo.url(besides: movie))
+        try require(RecoveryInfo.read(besides: movie) == nil, "A corrupt recovery sidecar must read as nil")
+        print("PASS: recovery sidecar write/read round-trip")
+
         let suiteName = "FrameletChecks-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }

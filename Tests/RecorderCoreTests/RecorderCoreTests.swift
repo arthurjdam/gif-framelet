@@ -63,3 +63,16 @@ private func region(_ rect: CGRect, in bounds: CGRect) throws -> CaptureRegion {
     #expect(options.frameCount(duration: 2) == 60)
     #expect(options.frameCount(duration: 999) == 3630)
 }
+
+@Test func recoveryInfoRoundTrip() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let movie = directory.appendingPathComponent("capture.mp4")
+    #expect(RecoveryInfo.url(besides: movie) == directory.appendingPathComponent("recovery.json"))
+    #expect(RecoveryInfo.read(besides: movie) == nil)
+    try RecoveryInfo(fps: 25).write(besides: movie)
+    #expect(RecoveryInfo.read(besides: movie) == RecoveryInfo(fps: 25))
+    try Data("not json".utf8).write(to: RecoveryInfo.url(besides: movie))
+    #expect(RecoveryInfo.read(besides: movie) == nil)
+}

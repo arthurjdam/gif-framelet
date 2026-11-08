@@ -59,7 +59,6 @@ private struct RecorderMenu: View {
         switch controller.phase {
         case .idle, .failed:
             Button("Record Region...  \(controller.settings.shortcut.display)", systemImage: "viewfinder") { controller.trigger() }
-                .disabled(controller.recoveryMovie != nil)
         case .selecting:
             Button("Cancel Selection", systemImage: "xmark") { controller.cancelSelection() }
         case .recording:
@@ -72,7 +71,7 @@ private struct RecorderMenu: View {
         if let message = controller.errorMessage {
             Button("Show Error...", systemImage: "exclamationmark.triangle") { controller.showError(message) }
         }
-        if controller.recoveryMovie != nil && controller.phase != .exporting {
+        if controller.recoveryMovie != nil && !controller.isBusy {
             Button("Retry GIF Export", systemImage: "arrow.clockwise") { controller.retryExport() }
             Button("Reveal Original Recording", systemImage: "film") { controller.revealRecovery() }
             Button("Discard Recording...", systemImage: "trash", role: .destructive) { controller.discardRecovery() }
