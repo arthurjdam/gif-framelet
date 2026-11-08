@@ -16,6 +16,15 @@ enum GIFExporter {
         return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
     }
 
+    /// A take is usable for retry only if it exists and has a video track with a positive duration.
+    static func isUsableMovie(_ url: URL) async -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let asset = AVURLAsset(url: url)
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty,
+              let duration = try? await asset.load(.duration) else { return false }
+        return duration.seconds.isFinite && duration.seconds > 0
+    }
+
     static func export(
         movie: URL, directory: URL, encoder: URL, options: ExportOptions,
         progress: @escaping @Sendable (Double, ExportStage) async -> Void

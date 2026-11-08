@@ -76,6 +76,29 @@ enum SelfChecks {
         try require(RecoveryInfo.read(besides: movie) == nil, "A corrupt recovery sidecar must read as nil")
         print("PASS: recovery sidecar write/read round-trip")
 
+        let take = { (name: String, contents: Data?) throws -> URL in
+            let folder = directory.appendingPathComponent("Framelet-\(name)", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent("capture.mp4")
+            if let contents { try contents.write(to: url) }
+            return url
+        }
+        let previous = try take("previous", Data(contentsOf: movie))
+        for (name, contents) in [("empty", Data()), ("garbage", Data("not a movie".utf8)), ("missing", nil)] as [(String, Data?)] {
+            let unusable = try take(name, contents)
+            let kept = await AppController.recovery(replacing: previous, with: unusable)
+            try require(kept == previous, "An unusable \(name) take must keep the previous recovery")
+            try require(FileManager.default.fileExists(atPath: previous.path), "An unusable \(name) take must not delete the previous recovery")
+            try require(!FileManager.default.fileExists(atPath: unusable.deletingLastPathComponent().path), "An unusable \(name) take must be removed")
+        }
+        let lone = await AppController.recovery(replacing: nil, with: try take("lone", Data()))
+        try require(lone == nil, "An unusable take must not become the recovery")
+        let replacement = try take("replacement", Data(contentsOf: movie))
+        let replaced = await AppController.recovery(replacing: previous, with: replacement)
+        try require(replaced == replacement, "A usable take must replace the recovery")
+        try require(!FileManager.default.fileExists(atPath: previous.path), "Replacing must delete the previous recovery")
+        print("PASS: unusable new take keeps the previous recovery; usable take replaces it")
+
         let suiteName = "FrameletChecks-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
