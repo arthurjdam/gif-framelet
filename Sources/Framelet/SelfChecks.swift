@@ -81,6 +81,36 @@ enum SelfChecks {
         try require(restored.outputDirectory.standardizedFileURL == outputDirectory.standardizedFileURL, "Folder bookmark must persist")
         print("PASS: default shortcut, settings persistence, output folder bookmark")
 
+        let locked = directory.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o555])
+        try require(FolderStatus(of: outputDirectory) == .ok, "A writable folder must validate")
+        try require(FolderStatus(of: directory.appendingPathComponent("missing")) == .missing, "A missing folder must be reported")
+        try require(FolderStatus(of: movie) == .notDirectory, "A file is not an output folder")
+        try require(FolderStatus(of: locked) == .notWritable, "A read-only folder must be reported")
+        let discarded = directory.appendingPathComponent("trashed-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: discarded, withIntermediateDirectories: false)
+        var trashed: NSURL?
+        try FileManager.default.trashItem(at: discarded, resultingItemURL: &trashed)
+        defer { if let trashed { try? FileManager.default.removeItem(at: trashed as URL) } }
+        try require((trashed as URL?).map { FolderStatus(of: $0) } == .inTrash, "A folder in the Trash must be reported")
+        let chosen = directory.appendingPathComponent("chosen", isDirectory: true)
+        let moved = directory.appendingPathComponent("moved", isDirectory: true)
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: false)
+        try settings.setDirectory(chosen)
+        let original = defaults.data(forKey: "outputBookmark")
+        try FileManager.default.moveItem(at: chosen, to: moved)
+        let relocated = AppSettings(defaults: defaults)
+        try require(relocated.outputDirectory.resolvingSymlinksInPath() == moved.resolvingSymlinksInPath(), "A moved folder must resolve")
+        try require(defaults.data(forKey: "outputBookmark") != original, "A stale bookmark must be refreshed and persisted")
+        try FileManager.default.removeItem(at: moved)
+        let gone = AppSettings(defaults: defaults)
+        try require(gone.outputDirectory.lastPathComponent == "moved" && gone.outputDirectory.deletingLastPathComponent()
+                        .resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+                    "A deleted folder must be kept, not replaced by Desktop; got \(gone.outputDirectory.path)")
+        try require(gone.outputStatus == .missing, "A deleted folder must be reported missing")
+        try require(gone.outputProblem?.contains(gone.outputDirectory.path(percentEncoded: false)) == true, "The problem must name the folder")
+        print("PASS: output folder validation, stale bookmark refresh, missing folder reported")
+
         let snapshots = ProcessInfo.processInfo.environment["FRAMELET_TEST_ARTIFACTS"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? directory
         try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
         try RegionSelector.checkInteractions(snapshots: snapshots)

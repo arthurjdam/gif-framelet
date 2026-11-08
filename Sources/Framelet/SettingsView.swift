@@ -75,6 +75,9 @@ struct SettingsView: View {
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(settings.outputDirectory.path)
                         }
+                        if let warning = folderWarning {
+                            Label(warning, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
                         Button("Choose Folder...", systemImage: "folder.badge.plus") { controller.chooseDirectory() }
                             .disabled(controller.phase == .exporting)
                         Toggle("Reveal GIF in Finder after export", isOn: $settings.revealAfterExport)
@@ -96,10 +99,21 @@ struct SettingsView: View {
                         }
                     }
                 }.formStyle(.grouped)
+                .onAppear { settings.refreshOutputStatus() }
             }
         }
         .padding(12)
         .frame(width: 520, height: 540)
+    }
+
+    private var folderWarning: String? {
+        switch settings.outputStatus {
+        case .ok: nil
+        case .missing: "This folder is missing or its disk is not connected."
+        case .notDirectory: "This location is a file, not a folder."
+        case .inTrash: "This folder is in the Trash."
+        case .notWritable: "Framelet can't write to this folder."
+        }
     }
 }
 
