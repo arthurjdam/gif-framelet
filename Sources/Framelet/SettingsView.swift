@@ -89,6 +89,7 @@ struct SettingsView: View {
                         Button("Choose Folder...", systemImage: "folder.badge.plus") { controller.chooseDirectory() }
                             .disabled(controller.phase == .exporting)
                         Toggle("Reveal GIF in Finder after export", isOn: $settings.revealAfterExport)
+                        Toggle("Copy GIF to clipboard after export", isOn: $settings.copyAfterExport)
                     }
                     Section("Activity") {
                         LabeledContent("Status", value: controller.statusText)

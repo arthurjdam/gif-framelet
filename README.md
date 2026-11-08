@@ -46,7 +46,7 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
 5. Press the same global shortcut again, choose **Stop Recording** in Framelet's menu,
   or use macOS's native recording stop button. All three finalize the movie and
   open the preview (or export a GIF right away when preview is off). The Framelet
-   menu-bar icon shows elapsed recording time.
+  menu-bar icon shows elapsed recording time.
    To throw a take away instead, choose **Discard Recording** or press the shortcut
    with Option added (**Option-Command-Shift-8** by default). Nothing is exported, the
    temporary movie is deleted, and any earlier recording kept for retry is left alone.
@@ -60,6 +60,10 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
    window keeps the take for retry from the menu bar. Turn off **Preview before
    export** in Settings to export immediately after stopping.
 7. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
+   A notification reports the GIF's file size, dimensions, and duration, with **Copy**
+   and **Show in Finder** actions; failed exports post one too. Framelet asks for
+   notification permission on the first export, and everything else works without it.
+   The menu's **Show Last GIF in Finder** item also shows the file size.
 
 For a second take of the same area, choose **Record Last Region** in the menu bar: it
 skips drawing and starts recording the region from the last recording that started.
@@ -82,8 +86,9 @@ blank because of macOS or the source application's capture restrictions.
 - **GIF:** 5-30 fps, maximum width of 320-2560 pixels, quality of 20-100, faster
   encoding, infinite looping or single playback, and preview before export (on by default). Retina scaling is respected;
   the capture stage does not upscale small selections.
-- **Files:** destination folder, reveal-in-Finder preference, export progress,
-  cancellation, and retry of a failed export.
+- **Files:** destination folder, reveal-in-Finder preference, copy GIF to clipboard
+  after export (off by default), export progress, cancellation, and retry of a failed
+  export.
 
 Defaults: 15 fps, 1280-pixel maximum width, quality 80, infinite loop, pointer on,
 outside dimming on, a 60-second recording limit, and no countdown. Lower frame rates, widths, and

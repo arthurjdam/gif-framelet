@@ -9,6 +9,7 @@ final class AppController: ObservableObject {
     let settings = AppSettings()
     let shortcut = GlobalShortcut()
     private let selector = RegionSelector()
+    private let notifier = ExportNotifier()
     private var recorder: ScreenRecorder?
     private var settingsWindow: NSWindow?
     private var timer: Timer?
@@ -32,6 +33,7 @@ final class AppController: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var recoveryMovie: URL?
     @Published private(set) var lastExport: URL?
+    @Published private(set) var lastExportSize: String?
     @Published private(set) var editingShortcut = false
 
     var elapsedText: String { String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60) }
@@ -48,6 +50,12 @@ final class AppController: ObservableObject {
         case .exporting: exportStage == .preparingFrames ? "\(exportStage.title) \(Int(exportProgress * 100))%" : exportStage.title
         case .failed: recoveryMovie == nil ? "Recording unavailable" : "Recording saved for retry"
         }
+    }
+
+    /// Sets the notification delegate before launch finishes, so a notification click that relaunches the app is delivered.
+    func activateNotifications() {
+        notifier.onShowError = { [weak self] in if let message = self?.errorMessage { self?.showError(message) } }
+        notifier.activate()
     }
 
     func launch() {
@@ -374,20 +382,38 @@ final class AppController: ObservableObject {
                         self.exportStage = stage
                     }
                 }
+                let summary = await Self.summary(of: url)
                 lastExport = url
+                lastExportSize = summary.map { GIFSummary.fileSize($0.bytes) }
                 removeRecovery()
-                phase = .idle
+                phase = restingPhase
                 exportTask = nil
                 if settings.revealAfterExport { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                if settings.copyAfterExport { Self.copy(url) }
+                notifier.exported(url, summary: summary)
             } catch is CancellationError {
                 fail("Export cancelled. The original recording is available for retry.")
                 exportTask = nil
             } catch {
                 settings.refreshOutputStatus()
-                fail(settings.outputProblem ?? error.localizedDescription)
                 exportTask = nil
+                if let problem = settings.outputProblem {
+                    fail(problem)
+                    offerDirectoryChoice(problem)
+                } else {
+                    fail(error.localizedDescription)
+                    notifier.failed(error.localizedDescription)
+                }
             }
         }
+    }
+
+    /// Reads the saved GIF's size, dimensions and frame-delay duration off the main actor.
+    nonisolated private static func summary(of url: URL) async -> GIFSummary? { GIFSummary(contentsOf: url) }
+
+    static func copy(_ url: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([url as NSURL])
     }
 
     private func offerDirectoryChoice(_ message: String) {
