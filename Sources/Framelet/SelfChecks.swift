@@ -112,6 +112,22 @@ enum SelfChecks {
         try require(restored.outputDirectory.standardizedFileURL == outputDirectory.standardizedFileURL, "Folder bookmark must persist")
         print("PASS: default shortcut, settings persistence, output folder bookmark")
 
+        try require(restored.lastRegion == nil, "No last region must be stored by default")
+        guard let captured = CaptureRegion(rect: CGRect(x: -1800, y: 1000, width: 400, height: 250),
+                                           displayBounds: CGRect(x: -1920, y: 900, width: 1920, height: 1080)) else {
+            throw RecorderError.message("Fixture region must be valid")
+        }
+        settings.lastRegion = LastRegion(region: captured, displayID: 3)
+        let reloaded = AppSettings(defaults: defaults).lastRegion
+        try require(reloaded == settings.lastRegion, "The last region must persist across launches")
+        try require(reloaded?.region(displays: [3: captured.displayBounds]) == captured, "A restored region on an unchanged display must be valid")
+        try require(reloaded?.region(displays: [3: CGRect(x: -1920, y: 900, width: 1280, height: 800)]) == nil, "A resized display must invalidate it")
+        try require(reloaded?.region(displays: [1: captured.displayBounds]) == nil, "A disconnected display must invalidate it")
+        settings.lastRegion = nil
+        try require(AppSettings(defaults: defaults).lastRegion == nil, "Clearing the last region must persist")
+        try RegionSelector.checkPreselection()
+        print("PASS: last region persistence round-trip and validity rules")
+
         let locked = directory.appendingPathComponent("locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o555])
         try require(FolderStatus(of: outputDirectory) == .ok, "A writable folder must validate")

@@ -10,13 +10,18 @@ final class RegionSelector {
     var onRecord: ((CaptureRegion, NSScreen) -> Void)?
     var onCancel: (() -> Void)?
 
-    func show(maximumWidth: Int) {
+    /// Opens selection on every display. `preselect` starts selected, with its toolbar, on the display it belongs to.
+    func show(maximumWidth: Int, preselect: CaptureRegion? = nil) {
         close()
         previousApp = NSWorkspace.shared.frontmostApplication
         NSApp.activate()
         for screen in NSScreen.screens {
             let panel = SelectionPanel(screen: screen)
             panel.selectionView.maximumWidth = maximumWidth
+            if let preselect, preselect.displayBounds == screen.frame {
+                panel.selectionView.select(preselect.localRect)
+                selectedPanel = panel
+            }
             panel.selectionView.onSelect = { [weak self, weak panel] in
                 guard let self, let panel else { return }
                 self.selectedPanel = panel
@@ -26,11 +31,7 @@ final class RegionSelector {
                 panel.makeKey()
             }
             panel.selectionView.onRecord = { [weak self, weak panel] rect in
-                guard let self, let panel,
-                      let region = CaptureRegion(
-                        rect: rect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY),
-                        displayBounds: screen.frame
-                      ) else { return }
+                guard let self, let panel, let region = CaptureRegion(localRect: rect, displayBounds: screen.frame) else { return }
                 self.selectedPanel = panel
                 self.onRecord?(region, screen)
             }
@@ -39,6 +40,19 @@ final class RegionSelector {
             panel.orderFrontRegardless()
             if screen.frame.contains(NSEvent.mouseLocation) { panel.makeKey() }
         }
+        selectedPanel?.makeKey()
+    }
+
+    /// Shows only `region`'s border on `screen`, with no toolbar or drawing, ready for `setRecording`.
+    func show(region: CaptureRegion, on screen: NSScreen) {
+        close()
+        previousApp = NSWorkspace.shared.frontmostApplication
+        let panel = SelectionPanel(screen: screen)
+        panel.ignoresMouseEvents = true
+        panel.selectionView.select(region.localRect, toolbar: false)
+        panels = [panel]
+        selectedPanel = panel
+        panel.orderFrontRegardless()
     }
 
     func setRecording(dimOutside: Bool) {
@@ -161,6 +175,13 @@ private final class SelectionView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func stopAnimation() { timer?.invalidate(); timer = nil }
+
+    func select(_ rect: CGRect, toolbar: Bool = true) {
+        selection = rect
+        if toolbar { updateToolbar() }
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
 
     func clear() {
         selection = .zero
@@ -438,5 +459,46 @@ extension RegionSelector {
         guard recorded == nil else { throw RecorderError.message("Recording overlay must not restart capture") }
         try snapshot("recording.png")
         print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")
+    }
+
+    static func checkPreselection() throws {
+        let display = CGRect(x: -1920, y: 900, width: 1920, height: 1080)
+        guard let last = CaptureRegion(rect: CGRect(x: -1800, y: 1000, width: 400, height: 250), displayBounds: display) else {
+            throw RecorderError.message("Fixture region must be valid")
+        }
+        let view = SelectionView(frame: CGRect(origin: .zero, size: display.size))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { view.stopAnimation(); window.close() }
+        var recorded: CGRect?
+        view.onRecord = { recorded = $0 }
+        func pressReturn() {
+            view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false,
+                                                keyCode: UInt16(kVK_Return))!)
+        }
+        func mouse(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+
+        view.scale = 2
+        view.select(last.localRect)
+        guard view.dimensions.stringValue == "400 \u{00d7} 250 pt \u{2192} 800 \u{00d7} 500 px" else {
+            throw RecorderError.message("A pre-selection must show the toolbar label, got \(view.dimensions.stringValue)")
+        }
+        pressReturn()
+        guard let first = recorded, CaptureRegion(localRect: first, displayBounds: display) == last else {
+            throw RecorderError.message("Return must record the pre-selected region on a negative-origin display, got \(String(describing: recorded))")
+        }
+        view.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 1000, y: 600)))
+        view.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 1100, y: 700)))
+        view.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 1100, y: 700)))
+        pressReturn()
+        guard recorded == CGRect(x: 1000, y: 600, width: 100, height: 100) else {
+            throw RecorderError.message("Clicking outside a pre-selection must draw a new one, got \(String(describing: recorded))")
+        }
+        print("PASS: last-region pre-selection on a negative-origin display, toolbar label, Return, and drawing a new region")
     }
 }

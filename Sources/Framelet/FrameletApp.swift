@@ -59,6 +59,8 @@ private struct RecorderMenu: View {
         switch controller.phase {
         case .idle, .failed:
             Button("Record Region...  \(controller.settings.shortcut.display)", systemImage: "viewfinder") { controller.trigger() }
+            Button("Record Last Region", systemImage: "arrow.counterclockwise") { controller.recordLastRegion() }
+                .disabled(controller.lastRegion == nil)
         case .selecting:
             Button("Cancel Selection", systemImage: "xmark") { controller.cancelSelection() }
         case .recording:

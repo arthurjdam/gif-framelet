@@ -22,6 +22,9 @@ private func region(_ rect: CGRect, in bounds: CGRect) throws -> CaptureRegion {
         in: CGRect(x: -1920, y: 900, width: 1920, height: 1080)
     )
     #expect(secondary.sourceRect == CGRect(x: 120, y: 580, width: 600, height: 400))
+    #expect(secondary.localRect == CGRect(x: 120, y: 100, width: 600, height: 400))
+    let local = try #require(CaptureRegion(localRect: secondary.localRect, displayBounds: secondary.displayBounds))
+    #expect(local == secondary)
 }
 
 @Test func clipping() throws {
@@ -75,4 +78,27 @@ private func region(_ rect: CGRect, in bounds: CGRect) throws -> CaptureRegion {
     #expect(RecoveryInfo.read(besides: movie) == RecoveryInfo(fps: 25))
     try Data("not json".utf8).write(to: RecoveryInfo.url(besides: movie))
     #expect(RecoveryInfo.read(besides: movie) == nil)
+}
+
+@Test func lastRegionValidity() throws {
+    let external = CGRect(x: 1440, y: 0, width: 1920, height: 1080)
+    let last = LastRegion(region: try region(CGRect(x: 1600, y: 100, width: 400, height: 250), in: external), displayID: 7)
+    #expect(last.region(displays: [1: laptop, 7: external])?.rect == CGRect(x: 1600, y: 100, width: 400, height: 250))
+    #expect(last.region(displays: [1: laptop]) == nil, "A disconnected display must be ignored")
+    #expect(last.region(displays: [7: laptop]) == nil, "A display with changed geometry must be ignored")
+    #expect(last.region(displays: [7: external.offsetBy(dx: -1440, dy: 0)]) == nil, "A moved display must be ignored")
+    let stale = Data(#"{"rect":[[1800,900],[400,250]],"displayBounds":[[1440,0],[1920,1080]],"displayID":7}"#.utf8)
+    #expect(try JSONDecoder().decode(LastRegion.self, from: stale).region(displays: [7: external]) == nil,
+            "A rect that no longer fits must be ignored")
+}
+
+@Test func lastRegionPersistence() throws {
+    let suiteName = "FrameletTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let last = LastRegion(region: try region(CGRect(x: 10.5, y: 20, width: 300, height: 200), in: laptop), displayID: 1)
+    defaults.set(try JSONEncoder().encode(last), forKey: "lastRegion")
+    let restored = try JSONDecoder().decode(LastRegion.self, from: try #require(defaults.data(forKey: "lastRegion")))
+    #expect(restored == last)
+    #expect(restored.region(displays: [1: laptop]) == CaptureRegion(rect: last.rect, displayBounds: laptop))
 }

@@ -12,6 +12,14 @@ public struct CaptureRegion: Equatable, Sendable {
         self.displayBounds = displayBounds
     }
 
+    /// A region from a rect in a selection view covering `displayBounds` (origin at the display's bottom-left).
+    public init?(localRect: CGRect, displayBounds: CGRect) {
+        self.init(rect: localRect.offsetBy(dx: displayBounds.minX, dy: displayBounds.minY), displayBounds: displayBounds)
+    }
+
+    /// The rect in a selection view covering the display; the inverse of `init(localRect:displayBounds:)`.
+    public var localRect: CGRect { rect.offsetBy(dx: -displayBounds.minX, dy: -displayBounds.minY) }
+
     public var sourceRect: CGRect {
         CGRect(
             x: rect.minX - displayBounds.minX,
