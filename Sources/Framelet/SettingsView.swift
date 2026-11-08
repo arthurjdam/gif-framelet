@@ -111,6 +111,7 @@ struct SettingsView: View {
         case .ok: nil
         case .missing: "This folder is missing or its disk is not connected."
         case .notDirectory: "This location is a file, not a folder."
+        case .inTrash: "This folder is in the Trash."
         case .notWritable: "Framelet can't write to this folder."
         }
     }

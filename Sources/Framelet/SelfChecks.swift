@@ -71,6 +71,12 @@ enum SelfChecks {
         try require(FolderStatus(of: directory.appendingPathComponent("missing")) == .missing, "A missing folder must be reported")
         try require(FolderStatus(of: movie) == .notDirectory, "A file is not an output folder")
         try require(FolderStatus(of: locked) == .notWritable, "A read-only folder must be reported")
+        let discarded = directory.appendingPathComponent("trashed-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: discarded, withIntermediateDirectories: false)
+        var trashed: NSURL?
+        try FileManager.default.trashItem(at: discarded, resultingItemURL: &trashed)
+        defer { if let trashed { try? FileManager.default.removeItem(at: trashed as URL) } }
+        try require((trashed as URL?).map { FolderStatus(of: $0) } == .inTrash, "A folder in the Trash must be reported")
         let chosen = directory.appendingPathComponent("chosen", isDirectory: true)
         let moved = directory.appendingPathComponent("moved", isDirectory: true)
         try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: false)

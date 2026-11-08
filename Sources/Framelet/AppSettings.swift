@@ -70,6 +70,7 @@ final class AppSettings: ObservableObject {
         case .ok: return nil
         case .missing: return "The output folder \"\(path)\" is missing, or its disk is not connected. Reconnect it or choose another folder, then retry the export."
         case .notDirectory: return "The output location \"\(path)\" is a file, not a folder. Choose another folder, then retry the export."
+        case .inTrash: return "The output folder \"\(path)\" is in the Trash. Put it back or choose another folder, then retry the export."
         case .notWritable: return "Framelet can't write to the output folder \"\(path)\". Choose another folder, then retry the export."
         }
     }
@@ -81,14 +82,18 @@ final class AppSettings: ObservableObject {
 }
 
 enum FolderStatus: Equatable {
-    case ok, missing, notDirectory, notWritable
+    case ok, missing, notDirectory, inTrash, notWritable
 
     init(of url: URL) {
+        let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
+        var relationship = FileManager.URLRelationship.other
         let path = url.path(percentEncoded: false)
-        if !FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) { self = .missing }
+        if !fileManager.fileExists(atPath: path, isDirectory: &isDirectory) { self = .missing }
         else if !isDirectory.boolValue { self = .notDirectory }
-        else { self = FileManager.default.isWritableFile(atPath: path) ? .ok : .notWritable }
+        else if (try? fileManager.getRelationship(&relationship, of: .trashDirectory, in: .userDomainMask, toItemAt: url)) != nil,
+                relationship == .contains { self = .inTrash }
+        else { self = fileManager.isWritableFile(atPath: path) ? .ok : .notWritable }
     }
 }
 
