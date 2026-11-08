@@ -8,6 +8,6 @@ let package = Package(
     targets: [
         .target(name: "RecorderCore"),
         .executableTarget(name: "Framelet", dependencies: ["RecorderCore"]),
-        .executableTarget(name: "FrameletChecks", dependencies: ["RecorderCore"], path: "Tests/RecorderCoreTests")
+        .testTarget(name: "RecorderCoreTests", dependencies: ["RecorderCore"])
     ]
 )

@@ -81,7 +81,7 @@ normally without the Control-click bypass.
 Run before publishing:
 
 ```sh
-swift run FrameletChecks
+swift test
 zsh scripts/build-app.sh
 dist/Framelet.app/Contents/MacOS/Framelet --self-test
 codesign --verify --deep --strict --verbose=4 dist/Framelet.app
