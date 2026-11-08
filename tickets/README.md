@@ -27,15 +27,17 @@ besides Finder, and test and CI coverage that doesn't scale.
 | [FEAT-008](FEAT-008-selection-precision.md) | Feature | Keyboard nudging and output pixel size in the selector | 1 | Done (integration e0f6617), QA passed |
 | [PERF-012](PERF-012-faster-frame-extraction.md) | Perf | Sequential frame decode instead of per-frame seeking; typed export stages | 1 | Done (integration e0f6617), QA passed |
 | [TEST-013](TEST-013-swift-testing-and-ci.md) | Infra | Move core checks to `swift test`, add CI | 1 | Done (integration e0f6617), QA passed |
-| [FEAT-005](FEAT-005-discard-recording.md) | Feature | Discard an in-progress recording without exporting | 2 | Todo |
-| [FEAT-006](FEAT-006-preview-and-trim.md) | Feature | Preview and trim before export | 2 | Todo |
-| [FEAT-007](FEAT-007-record-last-region.md) | Feature | Record the last region again | 2 | Todo |
-| [FEAT-009](FEAT-009-export-feedback.md) | Feature | Export notification, file size, auto-copy option | 2 | Todo |
-| [FEAT-010](FEAT-010-launch-at-login-and-about.md) | Feature | Launch at login and an About item | 2 | Todo |
-| [FEAT-011](FEAT-011-countdown.md) | Feature | Optional countdown before recording | 2 | Todo |
+| [FEAT-005](FEAT-005-discard-recording.md) | Feature | Discard an in-progress recording without exporting | 2 | Done (integration 2f9ac20), QA passed |
+| [FEAT-006](FEAT-006-preview-and-trim.md) | Feature | Preview and trim before export | 2 | Done (integration 2f9ac20), QA passed |
+| [FEAT-007](FEAT-007-record-last-region.md) | Feature | Record the last region again | 2 | Done (integration 2f9ac20), QA passed |
+| [FEAT-009](FEAT-009-export-feedback.md) | Feature | Export notification, file size, auto-copy option | 2 | Done (integration 2f9ac20), QA passed |
+| [FEAT-010](FEAT-010-launch-at-login-and-about.md) | Feature | Launch at login and an About item | 2 | Done (integration 2f9ac20), QA passed |
+| [FEAT-011](FEAT-011-countdown.md) | Feature | Optional countdown before recording | 2 | Done (integration 2f9ac20), QA passed |
 | [REL-014](REL-014-universal-binary.md) | Release | Universal (arm64 + x86_64) build | Backlog | Needs owner |
 | [DEC-015](DEC-015-licensing.md) | Decision | Project license and gifski AGPL position | Backlog | Needs owner |
 | [DOC-016](DOC-016-readme-polish.md) | Docs | README demo GIF, install section, honest tagline | Backlog | Todo |
 
 Wave 1 covers fixes and isolated changes. Wave 2 covers features that all touch
 `AppController` and start from the integrated wave 1.
+
+QA reports: [wave 1](QA-wave1.md), [wave 2](QA-wave2.md).
