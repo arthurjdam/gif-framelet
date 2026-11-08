@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import ImageIO
 import RecorderCore
+import Synchronization
 
 @MainActor
 enum SelfChecks {
@@ -52,6 +53,21 @@ enum SelfChecks {
         try require(FileManager.default.fileExists(atPath: movie.path), "Destination failure must preserve the original")
         print("PASS: destination failure preserves original for retry")
 
+        let long = directory.appendingPathComponent("long.mp4")
+        try await makeMovie(at: long, frames: 300, fps: 30)
+        let clock = ContinuousClock()
+        let start = clock.now
+        let extracted = Mutex<ContinuousClock.Instant?>(nil)
+        let timed = try await GIFExporter.export(movie: long, directory: outputDirectory, encoder: encoder,
+                                                 options: ExportOptions(fps: 30, maximumWidth: 320, quality: 80, fast: false, loops: true)) { progress, _ in
+            if progress >= 1 { extracted.withLock { $0 = $0 ?? clock.now } }
+        }
+        let seconds = { (duration: Duration) in duration.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 2))) }
+        let total = clock.now - start
+        let frames = CGImageSourceCreateWithURL(timed as CFURL, nil).map(CGImageSourceGetCount) ?? 0
+        try require(frames >= 290 && frames <= 301, "Long GIF must contain its frames; got \(frames)")
+        print("PASS: 10 s @ 30 fps export (\(frames) frames) in \(seconds(total)), frame extraction \(seconds((extracted.withLock { $0 } ?? start) - start))")
+
         let suiteName = "FrameletChecks-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -92,7 +108,7 @@ enum SelfChecks {
         try require(abs(duration - 2) <= 0.15, "GIF duration is \(duration), expected 2 seconds")
     }
 
-    private static func makeMovie(at url: URL) async throws {
+    private static func makeMovie(at url: URL, frames: Int = 20, fps: Int = 10) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -107,7 +123,7 @@ enum SelfChecks {
         writer.add(input)
         try require(writer.startWriting(), "Could not start fixture writer")
         writer.startSession(atSourceTime: .zero)
-        for index in 0..<20 {
+        for index in 0..<frames {
             let deadline = Date().addingTimeInterval(10)
             while !input.isReadyForMoreMediaData {
                 try require(writer.status == .writing && Date() < deadline, "Fixture writer stalled")
@@ -127,11 +143,11 @@ enum SelfChecks {
             context.setFillColor(CGColor(red: 0.91, green: 0.96, blue: 0.94, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
             context.setFillColor(CGColor(red: 0.92, green: 0.16, blue: 0.20, alpha: 1))
-            context.fillEllipse(in: CGRect(x: 12 + index * 12, y: 62, width: 44, height: 44))
+            context.fillEllipse(in: CGRect(x: 12 + index % 20 * 12, y: 62, width: 44, height: 44))
             CVPixelBufferUnlockBaseAddress(buffer, [])
-            try require(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 10)), "Could not append fixture frame")
+            try require(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: CMTimeScale(fps))), "Could not append fixture frame")
         }
-        writer.endSession(atSourceTime: CMTime(value: 2, timescale: 1))
+        writer.endSession(atSourceTime: CMTime(value: Int64(frames), timescale: CMTimeScale(fps)))
         input.markAsFinished()
         await writer.finishWriting()
         try require(writer.status == .completed, "Fixture writer failed: \(writer.error?.localizedDescription ?? "unknown")")

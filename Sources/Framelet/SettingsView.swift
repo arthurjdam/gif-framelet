@@ -62,7 +62,7 @@ struct SettingsView: View {
                         Toggle("Loop forever", isOn: $settings.loops)
                     }.disabled(controller.isBusy)
                     Section("Encoder") {
-                        LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : "1.34.0")
+                        LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : GIFExporter.encoderVersion ?? "Unknown")
                         Link("Encoder & Licensing", destination: URL(string: "https://gif.ski")!)
                     }
                 }.formStyle(.grouped)
@@ -82,7 +82,7 @@ struct SettingsView: View {
                     Section("Activity") {
                         LabeledContent("Status", value: controller.statusText)
                         if controller.phase == .exporting {
-                            if controller.exportStage == "Preparing frames" {
+                            if controller.exportStage == .preparingFrames {
                                 ProgressView(value: controller.exportProgress)
                             } else { ProgressView().controlSize(.small) }
                             Button("Cancel Export", systemImage: "xmark") { controller.cancelExport() }

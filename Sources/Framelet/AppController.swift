@@ -18,7 +18,7 @@ final class AppController: ObservableObject {
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var exportProgress = 0.0
-    @Published private(set) var exportStage = "Preparing frames"
+    @Published private(set) var exportStage = ExportStage.preparingFrames
     @Published private(set) var errorMessage: String?
     @Published private(set) var recoveryMovie: URL?
     @Published private(set) var lastExport: URL?
@@ -33,7 +33,7 @@ final class AppController: ObservableObject {
         case .starting: "Starting recording"
         case .recording: "Recording \(elapsedText)"
         case .stopping: "Finishing recording"
-        case .exporting: exportStage == "Preparing frames" ? "Preparing frames \(Int(exportProgress * 100))%" : exportStage
+        case .exporting: exportStage == .preparingFrames ? "\(exportStage.title) \(Int(exportProgress * 100))%" : exportStage.title
         case .failed: recoveryMovie == nil ? "Recording unavailable" : "Recording saved for retry"
         }
     }
@@ -174,7 +174,7 @@ final class AppController: ObservableObject {
         phase = .exporting
         errorMessage = nil
         exportProgress = 0
-        exportStage = "Preparing frames"
+        exportStage = .preparingFrames
         let outputDirectory = settings.outputDirectory
         let selected = settings.exportOptions
         let options = ExportOptions(fps: recordingOptions?.fps ?? selected.fps, maximumWidth: selected.maximumWidth,
