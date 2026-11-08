@@ -64,6 +64,15 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
     /// Cancels a start that is still in progress; `start` then stops any capture it began and throws `CancellationError`.
     func cancel() { cancelRequested = true; stopRequested = true }
 
+    /// Stops a capture that no session owns any more and deletes its take.
+    func discard() async {
+        cancel()
+        try? await stream?.stopCapture()
+        stream = nil
+        output = nil
+        if let movieURL { AppController.removeTake(movieURL) }
+    }
+
     private func begin(directory: URL, startCapture: () async throws -> Void, stopCapture: () async throws -> Void) async throws {
         do {
             if cancelRequested { throw CancellationError() }
@@ -189,32 +198,47 @@ extension ScreenRecorder {
     }
 
     static func checkCancelDuringStart() async throws {
-        for (cancelEarly, startFails) in [(true, false), (false, false), (false, true)] {
+        let streamError = NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue)
+        for (cancelEarly, startFails, streamFails) in [(true, false, false), (false, false, false), (false, true, false), (false, false, true)] {
             let recorder = ScreenRecorder()
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-cancel-check-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             recorder.movieURL = directory.appendingPathComponent("capture.mp4")
-            var started = false, stopped = false, notified = false
+            var started = false, stopped = false, notified = false, failures = 0
             recorder.onStopRequested = { notified = true }
-            recorder.onUnexpectedStop = { _ in notified = true }
+            // Mirrors AppController: a stream error while starting cancels the start.
+            recorder.onUnexpectedStop = { _ in failures += 1; recorder.cancel() }
             if cancelEarly { recorder.cancel() }
             do {
                 try await recorder.begin(directory: directory) {
                     started = true
-                    recorder.cancel()
+                    if streamFails { recorder.streamStopped(with: streamError) } else { recorder.cancel() }
                     await Task.yield()
                     if startFails { throw RecorderError.message("Capture failed after the display changed") }
                 } stopCapture: { stopped = true }
                 throw RecorderError.message("Start must fail with CancellationError after a stop request")
             } catch is CancellationError {}
             recorder.finishedRecording()
-            recorder.streamStopped(with: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
-            guard started != cancelEarly, stopped == (started && !startFails), !notified,
+            recorder.streamStopped(with: streamError)
+            guard started != cancelEarly, stopped == (started && !startFails), !notified, failures == (streamFails ? 1 : 0),
                   !FileManager.default.fileExists(atPath: directory.path) else {
                 throw RecorderError.message("Stop requested before start completes must stop any started capture, remove its directory, hide start errors, and stay silent")
             }
         }
-        print("PASS: stop requested before start completes stops capture and removes temporary files")
+        let orphan = ScreenRecorder()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-discard-check-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        orphan.movieURL = directory.appendingPathComponent("capture.mp4")
+        var orphanNotified = false
+        orphan.onStopRequested = { orphanNotified = true }
+        orphan.onUnexpectedStop = { _ in orphanNotified = true }
+        await orphan.discard()
+        orphan.finishedRecording()
+        orphan.streamStopped(with: streamError)
+        guard !orphanNotified, !FileManager.default.fileExists(atPath: directory.path) else {
+            throw RecorderError.message("Discarding an unowned capture must delete its take and stay silent")
+        }
+        print("PASS: stop or stream error before start completes stops capture and removes temporary files; unowned captures are discarded")
     }
 }
 

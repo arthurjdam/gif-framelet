@@ -120,16 +120,18 @@ final class AppController: ObservableObject {
         recorder.onStopRequested = { [weak self] in self?.stop() }
         recorder.onUnexpectedStop = { [weak self, weak recorder] error in
             guard let self, let recorder, self.recorder === recorder, self.phase == .recording || self.phase == .starting else { return }
-            let wasStarting = self.phase == .starting
             self.timer?.invalidate()
             self.selector.close()
+            if self.phase == .starting {
+                // begin() stops the capture and deletes the take; the start task's catch then leaves this error in place.
+                recorder.cancel()
+                self.fail(error.localizedDescription)
+                return
+            }
             self.phase = .stopping
             Task {
                 _ = try? await recorder.stop()
-                if let movie = recorder.movieURL {
-                    // begin() may still delete a take that failed while starting, so never keep it for retry.
-                    if wasStarting { Self.removeTake(movie) } else { _ = await self.keepForRetry(movie) }
-                }
+                if let movie = recorder.movieURL { _ = await self.keepForRetry(movie) }
                 self.recorder = nil
                 self.fail(error.localizedDescription)
             }
@@ -139,7 +141,11 @@ final class AppController: ObservableObject {
             do {
                 try await recorder.start(region: region, screen: screen, fps: options.fps, maximumWidth: options.maximumWidth, showsCursor: settings.showsCursor)
                 if let movie = recorder.movieURL { try? RecoveryInfo(fps: options.fps).write(besides: movie) }
-                guard phase == .starting else { return }
+                guard phase == .starting, self.recorder === recorder else {
+                    await recorder.discard()
+                    if self.recorder === recorder { self.recorder = nil }
+                    return
+                }
                 phase = .recording
                 elapsed = 0
                 startedAt = Date()
@@ -154,10 +160,12 @@ final class AppController: ObservableObject {
                 RunLoop.main.add(timer, forMode: .common)
                 self.timer = timer
             } catch is CancellationError {
+                guard self.recorder === recorder else { return }
                 self.recorder = nil
                 cancellingStart = false
                 if phase == .stopping { phase = restingPhase }
             } catch {
+                guard self.recorder === recorder else { return }
                 selector.close()
                 self.recorder = nil
                 fail(error.localizedDescription)
