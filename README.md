@@ -31,7 +31,10 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
 
 1. Press **Command-Shift-8**, or choose **Record Region** in the menu bar.
 2. Drag a rectangle on any connected display. Drag inside it to move it, or use its
-   eight handles to resize. Dimensions are displayed in screen points.
+   eight handles to resize. Arrow keys move it by 1 pt (Shift: 10 pt); Option-Arrow
+   grows or shrinks its right/top edge by 1 pt (Shift-Option: 10 pt). The toolbar shows
+   the size in screen points and the resulting GIF size in pixels, e.g.
+   `400 × 250 pt → 800 × 500 px` on a Retina display, capped by the maximum width setting.
 3. Press **Space** or **Return**, or click **Record**. **Escape** cancels selection.
 4. The border becomes solid red, controls disappear, and the surrounding screen dims subtly.
    The overlay becomes click-through so you can interact with the recorded app.
