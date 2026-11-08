@@ -15,6 +15,7 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
     private var stoppedByUser = false
     private var stopRequested = false
     private var stopNotified = false
+    private var cancelRequested = false
     var onStopRequested: (() -> Void)?
     var onUnexpectedStop: ((any Error) -> Void)?
 
@@ -48,14 +49,28 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
         outputConfiguration.videoCodecType = .h264
         let output = SCRecordingOutput(configuration: outputConfiguration, delegate: self)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        do {
+        try await begin(directory: directory) {
             try stream.addRecordingOutput(output)
             self.stream = stream
             self.output = output
             try await stream.startCapture()
+        } stopCapture: { try await stream.stopCapture() }
+    }
+
+    /// Cancels a start that is still in progress; `start` then stops any capture it began and throws `CancellationError`.
+    func cancel() { cancelRequested = true; stopRequested = true }
+
+    private func begin(directory: URL, startCapture: () async throws -> Void, stopCapture: () async throws -> Void) async throws {
+        do {
+            if cancelRequested { throw CancellationError() }
+            try await startCapture()
+            if cancelRequested {
+                try? await stopCapture()
+                throw CancellationError()
+            }
         } catch {
-            self.stream = nil
-            self.output = nil
+            stream = nil
+            output = nil
             try? FileManager.default.removeItem(at: directory)
             throw error
         }
@@ -167,6 +182,32 @@ extension ScreenRecorder {
         failed.streamStopped(with: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
         guard reportedFailure else { throw RecorderError.message("Real stream errors must remain failures") }
         print("PASS: native stop callback ordering, deduplication, movie finalization, and stream errors")
+    }
+
+    static func checkCancelDuringStart() async throws {
+        for cancelEarly in [true, false] {
+            let recorder = ScreenRecorder()
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-cancel-check-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            recorder.movieURL = directory.appendingPathComponent("capture.mp4")
+            var started = false, stopped = false, notified = false
+            recorder.onStopRequested = { notified = true }
+            if cancelEarly { recorder.cancel() }
+            do {
+                try await recorder.begin(directory: directory) {
+                    started = true
+                    recorder.cancel()
+                    await Task.yield()
+                } stopCapture: { stopped = true }
+                throw RecorderError.message("Start must fail with CancellationError after a stop request")
+            } catch is CancellationError {}
+            recorder.finishedRecording()
+            guard started != cancelEarly, stopped == started, !notified,
+                  !FileManager.default.fileExists(atPath: directory.path) else {
+                throw RecorderError.message("Stop requested before start completes must stop any started capture, remove its directory, and stay silent")
+            }
+        }
+        print("PASS: stop requested before start completes stops capture and removes temporary files")
     }
 }
 

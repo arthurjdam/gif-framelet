@@ -9,6 +9,7 @@ enum SelfChecks {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         try await ScreenRecorder.checkSystemStop()
+        try await ScreenRecorder.checkCancelDuringStart()
         guard let encoder = GIFExporter.bundledEncoder else { throw RecorderError.message("Run --self-test from the built .app bundle.") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-check-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

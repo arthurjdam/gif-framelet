@@ -71,7 +71,7 @@ final class AppController: ObservableObject {
     func trigger() {
         guard !editingShortcut else { return }
         switch phase {
-        case .recording: stop()
+        case .starting, .recording: stop()
         case .selecting: cancelSelection()
         case .idle, .failed:
             guard recoveryMovie == nil else { showSettings(); return }
@@ -85,7 +85,7 @@ final class AppController: ObservableObject {
             phase = .selecting
             settingsWindow?.orderOut(nil)
             selector.show()
-        case .starting, .stopping, .exporting: break
+        case .stopping, .exporting: break
         }
     }
 
@@ -133,6 +133,10 @@ final class AppController: ObservableObject {
                 }
                 RunLoop.main.add(timer, forMode: .common)
                 self.timer = timer
+            } catch is CancellationError {
+                self.recorder = nil
+                recordingOptions = nil
+                if phase == .stopping { phase = .idle }
             } catch {
                 selector.close()
                 self.recorder = nil
@@ -143,6 +147,12 @@ final class AppController: ObservableObject {
 
     func stop() {
         guard phase == .recording || phase == .starting, let recorder else { return }
+        if phase == .starting {
+            phase = .stopping
+            selector.close()
+            recorder.cancel()
+            return
+        }
         phase = .stopping
         timer?.invalidate()
         timer = nil
@@ -243,7 +253,7 @@ final class AppController: ObservableObject {
 
     private func interruptCapture() {
         if phase == .selecting { cancelSelection() }
-        if phase == .recording { stop() }
+        if phase == .recording || phase == .starting { stop() }
     }
 
     private func fail(_ message: String) { errorMessage = message; phase = .failed }
