@@ -63,7 +63,7 @@ private struct RecorderMenu: View {
             Button("Cancel Selection", systemImage: "xmark") { controller.cancelSelection() }
         case .recording:
             Button("Stop Recording  \(controller.settings.shortcut.display)", systemImage: "stop.fill") { controller.stop() }
-            Button("Discard Recording  \(controller.settings.shortcut.discardVariant.display)", systemImage: "trash", role: .destructive) { controller.discard() }
+            Button("Discard Recording" + (controller.settings.shortcut.discardVariant.map { "  \($0.display)" } ?? ""), systemImage: "trash", role: .destructive) { controller.discard() }
         case .starting:
             Button("Cancel", systemImage: "xmark") { controller.stop() }
         case .stopping:

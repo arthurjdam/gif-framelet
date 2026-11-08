@@ -6,6 +6,7 @@ final class GlobalShortcut {
     private var hotKey: EventHotKeyRef?
     private var discardHotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
+    static let stopID: UInt32 = 1, discardID: UInt32 = 2
     var onPress: (() -> Void)?
     var onDiscard: (() -> Void)?
 
@@ -18,7 +19,7 @@ final class GlobalShortcut {
                               MemoryLayout<EventHotKeyID>.size, nil, &identifier)
             MainActor.assumeIsolated {
                 let shortcut = Unmanaged<GlobalShortcut>.fromOpaque(context).takeUnretainedValue()
-                (identifier.id == 2 ? shortcut.onDiscard : shortcut.onPress)?()
+                (identifier.id == GlobalShortcut.discardID ? shortcut.onDiscard : shortcut.onPress)?()
             }
             return noErr
         }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &handler)
@@ -26,13 +27,15 @@ final class GlobalShortcut {
 
     func register(_ shortcut: Shortcut) throws {
         unregister()
-        hotKey = try Self.install(shortcut, id: 1)
+        hotKey = try Self.install(shortcut, id: Self.stopID)
     }
 
-    /// The shortcut plus Option discards a recording; registered only while one is in progress.
+    /// The shortcut plus Option discards a recording; registered only while one is in progress, and not at all
+    /// when the shortcut already contains Option.
     func registerDiscard(_ shortcut: Shortcut) throws {
         unregisterDiscard()
-        discardHotKey = try Self.install(shortcut.discardVariant, id: 2)
+        guard let variant = shortcut.discardVariant else { return }
+        discardHotKey = try Self.install(variant, id: Self.discardID)
     }
 
     private static func install(_ shortcut: Shortcut, id: UInt32) throws -> EventHotKeyRef? {
@@ -57,5 +60,11 @@ final class GlobalShortcut {
 }
 
 extension Shortcut {
-    var discardVariant: Shortcut { Shortcut(keyCode: keyCode, modifiers: modifiers | UInt32(optionKey), key: key) }
+    /// The shortcut plus Option, or nil if it already contains Option (the variant would be the shortcut itself).
+    var discardVariant: Shortcut? {
+        modifiers & UInt32(optionKey) != 0 ? nil : Shortcut(keyCode: keyCode, modifiers: modifiers | UInt32(optionKey), key: key)
+    }
+    var discardHint: String {
+        discardVariant == nil ? "Discard is available from the menu while recording" : "Add Option to this shortcut to discard a recording"
+    }
 }

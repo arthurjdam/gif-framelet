@@ -44,8 +44,8 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
    To throw a take away instead, choose **Discard Recording** or press the shortcut
    with Option added (**Option-Command-Shift-8** by default). Nothing is exported, the
    temporary movie is deleted, and any earlier recording kept for retry is left alone.
-   The Option shortcut is only active while recording; if it can't be registered
-   (for example because your shortcut already uses Option), the menu item still works.
+   The Option shortcut is only active while recording. If your shortcut already uses
+   Option, or the variant can't be registered, discard from the menu instead.
 6. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
 
 The region belongs to one display; it cannot span displays. Capture excludes
