@@ -10,12 +10,13 @@ final class RegionSelector {
     var onRecord: ((CaptureRegion, NSScreen) -> Void)?
     var onCancel: (() -> Void)?
 
-    func show() {
+    func show(maximumWidth: Int) {
         close()
         previousApp = NSWorkspace.shared.frontmostApplication
         NSApp.activate()
         for screen in NSScreen.screens {
             let panel = SelectionPanel(screen: screen)
+            panel.selectionView.maximumWidth = maximumWidth
             panel.selectionView.onSelect = { [weak self, weak panel] in
                 guard let self, let panel else { return }
                 self.selectedPanel = panel
@@ -69,6 +70,7 @@ private final class SelectionPanel: NSPanel {
 
     init(screen: NSScreen) {
         selectionView = SelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
+        selectionView.scale = screen.backingScaleFactor
         super.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -84,8 +86,9 @@ private final class SelectionPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, [kVK_Return, kVK_Space, kVK_Escape, kVK_ANSI_KeypadEnter].contains(Int(event.keyCode)),
-           event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+        let code = Int(event.keyCode), flags = event.modifierFlags.intersection([.command, .control, .option])
+        if event.type == .keyDown, [kVK_Return, kVK_Space, kVK_Escape, kVK_ANSI_KeypadEnter].contains(code) && flags.isEmpty
+            || SelectionView.arrows.contains(code) && flags.subtracting(.option).isEmpty {
             selectionView.keyDown(with: event)
             return
         }
@@ -98,6 +101,9 @@ private final class SelectionView: NSView {
     var onSelect: (() -> Void)?
     var onRecord: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
+    var scale: CGFloat = 1
+    var maximumWidth = 1280
+    static let arrows = [kVK_LeftArrow, kVK_RightArrow, kVK_DownArrow, kVK_UpArrow]
     private var selection = CGRect.zero
     private var startPoint = CGPoint.zero
     private var originalRect = CGRect.zero
@@ -107,7 +113,7 @@ private final class SelectionView: NSView {
     private var recording = false
     private var dimOutside = true
     private let toolbar = NSVisualEffectView()
-    private let dimensions = NSTextField(labelWithString: "")
+    let dimensions = NSTextField(labelWithString: "")
     private let recordButton = NSButton(title: "Record", target: nil, action: nil)
     private enum DragMode { case draw, move, resize(Int) }
 
@@ -123,10 +129,10 @@ private final class SelectionView: NSView {
         toolbar.isHidden = true
         dimensions.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         dimensions.alignment = .center
-        dimensions.frame = CGRect(x: 8, y: 12, width: 112, height: 18)
+        dimensions.frame = CGRect(x: 8, y: 12, width: 236, height: 18)
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.bezelStyle = .rounded
-        cancelButton.frame = CGRect(x: 124, y: 7, width: 76, height: 30)
+        cancelButton.frame = CGRect(x: 248, y: 7, width: 76, height: 30)
         cancelButton.toolTip = "Cancel (Escape)"
         recordButton.target = self
         recordButton.action = #selector(record)
@@ -134,7 +140,7 @@ private final class SelectionView: NSView {
         recordButton.contentTintColor = .systemRed
         recordButton.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: nil)
         recordButton.imagePosition = .imageLeading
-        recordButton.frame = CGRect(x: 202, y: 7, width: 94, height: 30)
+        recordButton.frame = CGRect(x: 326, y: 7, width: 94, height: 30)
         recordButton.toolTip = "Record (Space or Return)"
         toolbar.addSubview(dimensions)
         toolbar.addSubview(cancelButton)
@@ -274,10 +280,11 @@ private final class SelectionView: NSView {
     }
 
     private func updateToolbar() {
-        dimensions.stringValue = "\(Int(selection.width)) \u{00d7} \(Int(selection.height)) pt"
+        let pixels = CaptureRegion(rect: selection, displayBounds: bounds)?.pixelSize(scale: scale, maximumWidth: maximumWidth) ?? .zero
+        dimensions.stringValue = "\(Int(selection.width)) \u{00d7} \(Int(selection.height)) pt \u{2192} \(Int(pixels.width)) \u{00d7} \(Int(pixels.height)) px"
         let below = selection.minY - 54
         let vertical = below >= 8 ? below : min(bounds.height - 52, selection.maxY + 10)
-        toolbar.frame = CGRect(x: max(8, min(selection.midX - 152, bounds.width - 312)), y: vertical, width: 304, height: 44)
+        toolbar.frame = CGRect(x: max(8, min(selection.midX - 214, bounds.width - 436)), y: vertical, width: 428, height: 44)
         toolbar.isHidden = false
         needsDisplay = true
     }
@@ -286,8 +293,25 @@ private final class SelectionView: NSView {
         switch Int(event.keyCode) {
         case kVK_Escape: cancel()
         case kVK_Return, kVK_Space, kVK_ANSI_KeypadEnter: record()
+        case let code where Self.arrows.contains(code): nudge(code, by: event.modifierFlags.contains(.shift) ? 10 : 1,
+                                                              resizing: event.modifierFlags.contains(.option))
         default: super.keyDown(with: event)
         }
+    }
+
+    private func nudge(_ code: Int, by step: CGFloat, resizing: Bool) {
+        guard !recording, selection.width >= 16, selection.height >= 16 else { return }
+        let dx: CGFloat = code == kVK_LeftArrow ? -step : code == kVK_RightArrow ? step : 0
+        let dy: CGFloat = code == kVK_DownArrow ? -step : code == kVK_UpArrow ? step : 0
+        if resizing {
+            selection.size = CGSize(width: min(max(16, selection.width + dx), bounds.width - selection.minX),
+                                    height: min(max(16, selection.height + dy), bounds.height - selection.minY))
+        } else {
+            selection.origin = CGPoint(x: min(max(0, selection.minX + dx), bounds.width - selection.width),
+                                       y: min(max(0, selection.minY + dy), bounds.height - selection.height))
+        }
+        updateToolbar()
+        window?.invalidateCursorRects(for: self)
     }
 
     @objc private func cancel() { if !recording { onCancel?() } }
@@ -320,17 +344,51 @@ extension RegionSelector {
             view.mouseUp(with: event(.leftMouseUp, end))
         }
 
-        func key(_ code: Int) {
-            view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+        func key(_ code: Int, _ flags: NSEvent.ModifierFlags = [], times: Int = 1) {
+            for _ in 0..<times {
+                view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
                                                windowNumber: window.windowNumber, context: nil, characters: " ",
                                                charactersIgnoringModifiers: " ", isARepeat: false, keyCode: UInt16(code))!)
+            }
+        }
+        func expect(_ rect: CGRect, _ message: String) throws {
+            key(kVK_Return)
+            guard recorded == rect else { throw RecorderError.message("\(message): got \(String(describing: recorded))") }
+        }
+        func expectLabel(_ text: String) throws {
+            guard view.dimensions.stringValue == text else {
+                throw RecorderError.message("Toolbar label must read \(text), got \(view.dimensions.stringValue)")
+            }
         }
 
+        view.scale = 2
         drag(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 500, y: 350))
         key(kVK_Space)
         guard recorded == CGRect(x: 100, y: 100, width: 400, height: 250) else {
             throw RecorderError.message("Drawing a selection or the Space shortcut failed")
         }
+        try expectLabel("400 \u{00d7} 250 pt \u{2192} 800 \u{00d7} 500 px")
+        view.scale = 1
+        key(kVK_RightArrow); key(kVK_LeftArrow)
+        try expectLabel("400 \u{00d7} 250 pt \u{2192} 400 \u{00d7} 250 px")
+        view.scale = 2
+        view.maximumWidth = 640
+        key(kVK_RightArrow); key(kVK_LeftArrow)
+        try expectLabel("400 \u{00d7} 250 pt \u{2192} 640 \u{00d7} 400 px")
+        view.maximumWidth = 1280
+        key(kVK_RightArrow)
+        try expect(CGRect(x: 101, y: 100, width: 400, height: 250), "Arrow must nudge by 1 pt")
+        key(kVK_DownArrow, .shift)
+        try expect(CGRect(x: 101, y: 90, width: 400, height: 250), "Shift-Arrow must nudge by 10 pt")
+        key(kVK_RightArrow, .option); key(kVK_UpArrow, [.shift, .option])
+        try expect(CGRect(x: 101, y: 90, width: 401, height: 260), "Option-Arrow must resize the right/top edge")
+        key(kVK_LeftArrow, .shift, times: 20); key(kVK_UpArrow, .shift, times: 50)
+        try expect(CGRect(x: 0, y: 340, width: 401, height: 260), "Nudging must stay on screen")
+        key(kVK_RightArrow, [.shift, .option], times: 50); key(kVK_DownArrow, [.shift, .option], times: 50)
+        try expect(CGRect(x: 0, y: 340, width: 800, height: 16), "Resizing must stay on screen and at least 16 pt")
+        key(kVK_LeftArrow, [.shift, .option], times: 100); key(kVK_DownArrow, .option)
+        try expect(CGRect(x: 0, y: 340, width: 16, height: 16), "Resizing must keep at least 16 x 16 pt")
+        drag(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 500, y: 350))
         drag(from: CGPoint(x: 300, y: 200), to: CGPoint(x: 350, y: 225))
         key(kVK_Return)
         guard recorded == CGRect(x: 150, y: 125, width: 400, height: 250) else {
@@ -375,9 +433,10 @@ extension RegionSelector {
         try snapshot("selection.png")
         recorded = nil
         view.setRecording(dimOutside: true)
+        key(kVK_LeftArrow, .shift, times: 5); key(kVK_UpArrow, .option)
         key(kVK_Space)
         guard recorded == nil else { throw RecorderError.message("Recording overlay must not restart capture") }
         try snapshot("recording.png")
-        print("PASS: draw, move, resize, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")
+        print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")
     }
 }

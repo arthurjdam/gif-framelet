@@ -13,12 +13,12 @@ final class AppController: ObservableObject {
     private var timer: Timer?
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
-    private var recordingOptions: ExportOptions?
+    private var cancellingStart = false
     @Published private(set) var phase = Phase.idle
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var exportProgress = 0.0
-    @Published private(set) var exportStage = "Preparing frames"
+    @Published private(set) var exportStage = ExportStage.preparingFrames
     @Published private(set) var errorMessage: String?
     @Published private(set) var recoveryMovie: URL?
     @Published private(set) var lastExport: URL?
@@ -33,7 +33,7 @@ final class AppController: ObservableObject {
         case .starting: "Starting recording"
         case .recording: "Recording \(elapsedText)"
         case .stopping: "Finishing recording"
-        case .exporting: exportStage == "Preparing frames" ? "Preparing frames \(Int(exportProgress * 100))%" : exportStage
+        case .exporting: exportStage == .preparingFrames ? "\(exportStage.title) \(Int(exportProgress * 100))%" : exportStage.title
         case .failed: recoveryMovie == nil ? "Recording unavailable" : "Recording saved for retry"
         }
     }
@@ -71,46 +71,67 @@ final class AppController: ObservableObject {
     func trigger() {
         guard !editingShortcut else { return }
         switch phase {
-        case .recording: stop()
+        case .starting, .recording: stop()
         case .selecting: cancelSelection()
         case .idle, .failed:
-            guard recoveryMovie == nil else { showSettings(); return }
             guard ensurePermission() else { showSettings(); return }
             guard GIFExporter.bundledEncoder != nil else {
                 fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
                 showSettings()
                 return
             }
+            guard recoveryMovie == nil || confirmReplacingRecovery() else { return }
             errorMessage = nil
             phase = .selecting
             settingsWindow?.orderOut(nil)
-            selector.show()
-        case .starting, .stopping, .exporting: break
+            selector.show(maximumWidth: settings.maximumWidth)
+        case .stopping, .exporting: break
+        }
+    }
+
+    /// Framelet keeps one recovery. Asked before the selector opens; the previous take is only deleted once a new movie exists.
+    private func confirmReplacingRecovery() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Keep previous recording for retry?"
+        alert.informativeText = "Framelet keeps one recording for retry. The previous recording is deleted once the new one is captured. To keep it, reveal it and copy it elsewhere before recording."
+        alert.addButton(withTitle: "Record and Replace")
+        alert.addButton(withTitle: "Reveal Previous")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return true
+        case .alertSecondButtonReturn: revealRecovery(); return false
+        default: return false
         }
     }
 
     func cancelSelection() {
         guard phase == .selecting else { return }
         selector.close()
-        phase = .idle
+        phase = restingPhase
     }
 
     private func start(region: CaptureRegion, screen: NSScreen) {
         guard phase == .selecting else { return }
         phase = .starting
         let options = settings.exportOptions
-        recordingOptions = options
         let recorder = ScreenRecorder()
         self.recorder = recorder
         recorder.onStopRequested = { [weak self] in self?.stop() }
         recorder.onUnexpectedStop = { [weak self, weak recorder] error in
-            guard let self, let recorder, self.phase == .recording || self.phase == .starting else { return }
+            guard let self, let recorder, self.recorder === recorder, self.phase == .recording || self.phase == .starting else { return }
             self.timer?.invalidate()
             self.selector.close()
+            if self.phase == .starting {
+                // begin() stops the capture and deletes the take; the start task's catch then leaves this error in place.
+                recorder.cancel()
+                self.fail(error.localizedDescription)
+                return
+            }
             self.phase = .stopping
             Task {
                 _ = try? await recorder.stop()
-                self.preserveMovieIfPresent(recorder.movieURL)
+                if let movie = recorder.movieURL { _ = await self.keepForRetry(movie) }
                 self.recorder = nil
                 self.fail(error.localizedDescription)
             }
@@ -119,7 +140,12 @@ final class AppController: ObservableObject {
         Task {
             do {
                 try await recorder.start(region: region, screen: screen, fps: options.fps, maximumWidth: options.maximumWidth, showsCursor: settings.showsCursor)
-                guard phase == .starting else { return }
+                if let movie = recorder.movieURL { try? RecoveryInfo(fps: options.fps).write(besides: movie) }
+                guard phase == .starting, self.recorder === recorder else {
+                    await recorder.discard()
+                    if self.recorder === recorder { self.recorder = nil }
+                    return
+                }
                 phase = .recording
                 elapsed = 0
                 startedAt = Date()
@@ -133,7 +159,13 @@ final class AppController: ObservableObject {
                 }
                 RunLoop.main.add(timer, forMode: .common)
                 self.timer = timer
+            } catch is CancellationError {
+                guard self.recorder === recorder else { return }
+                self.recorder = nil
+                cancellingStart = false
+                if phase == .stopping { phase = restingPhase }
             } catch {
+                guard self.recorder === recorder else { return }
                 selector.close()
                 self.recorder = nil
                 fail(error.localizedDescription)
@@ -143,6 +175,13 @@ final class AppController: ObservableObject {
 
     func stop() {
         guard phase == .recording || phase == .starting, let recorder else { return }
+        if phase == .starting {
+            phase = .stopping
+            cancellingStart = true
+            selector.close()
+            recorder.cancel()
+            return
+        }
         phase = .stopping
         timer?.invalidate()
         timer = nil
@@ -151,33 +190,64 @@ final class AppController: ObservableObject {
             do {
                 let movie = try await recorder.stop()
                 self.recorder = nil
-                recoveryMovie = movie
-                UserDefaults.standard.set(movie.path, forKey: "recoveryMovie")
-                retryExport()
+                guard await keepForRetry(movie) else {
+                    fail("The recording contains no usable video." + (recoveryMovie == nil ? " Record for a little longer and try again." : " The previous recording is still available for retry."))
+                    return
+                }
+                export(movie)
             } catch {
-                preserveMovieIfPresent(recorder.movieURL)
+                if let movie = recorder.movieURL { _ = await keepForRetry(movie) }
                 self.recorder = nil
                 fail(error.localizedDescription)
             }
         }
     }
 
-    private func preserveMovieIfPresent(_ url: URL?) {
-        guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
-        recoveryMovie = url
-        UserDefaults.standard.set(url.path, forKey: "recoveryMovie")
+    private var restingPhase: Phase { recoveryMovie == nil ? .idle : .failed }
+
+    /// Makes a new take the single recovery (the user agreed to replace any previous one in trigger()),
+    /// but only if it is usable; otherwise the new take is deleted and the previous recovery is kept.
+    private func keepForRetry(_ movie: URL) async -> Bool {
+        guard movie != recoveryMovie else { return true }
+        guard await Self.recovery(replacing: recoveryMovie, with: movie) == movie else { return false }
+        recoveryMovie = movie
+        UserDefaults.standard.set(movie.path, forKey: "recoveryMovie")
+        return true
+    }
+
+    /// Returns the take to keep for retry: `new` if it is a usable movie (deleting `old`), else `old` (deleting `new`).
+    nonisolated static func recovery(replacing old: URL?, with new: URL) async -> URL? {
+        guard await GIFExporter.isUsableMovie(new) else { removeTake(new); return old }
+        if let old, old != new { removeTake(old) }
+        return new
+    }
+
+    nonisolated static func removeTake(_ movie: URL) {
+        let directory = movie.deletingLastPathComponent()
+        if directory.lastPathComponent.hasPrefix("Framelet-") { try? FileManager.default.removeItem(at: directory) }
     }
 
     func retryExport() {
-        guard phase != .exporting, let movie = recoveryMovie else { return }
+        guard !isBusy, let movie = recoveryMovie else { return }
+        export(movie)
+    }
+
+    private func export(_ movie: URL) {
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
+        settings.refreshOutputStatus()
+        if let problem = settings.outputProblem {
+            fail(problem)
+            Task { self.offerDirectoryChoice(problem) }
+            return
+        }
         phase = .exporting
         errorMessage = nil
         exportProgress = 0
-        exportStage = "Preparing frames"
+        exportStage = .preparingFrames
         let outputDirectory = settings.outputDirectory
         let selected = settings.exportOptions
-        let options = ExportOptions(fps: recordingOptions?.fps ?? selected.fps, maximumWidth: selected.maximumWidth,
+        let fps = RecoveryInfo.read(besides: movie)?.fps ?? selected.fps
+        let options = ExportOptions(fps: fps, maximumWidth: selected.maximumWidth,
                                     quality: selected.quality, fast: selected.fast, loops: selected.loops)
         exportTask = Task {
             do {
@@ -196,9 +266,24 @@ final class AppController: ObservableObject {
                 fail("Export cancelled. The original recording is available for retry.")
                 exportTask = nil
             } catch {
-                fail(error.localizedDescription)
+                settings.refreshOutputStatus()
+                fail(settings.outputProblem ?? error.localizedDescription)
                 exportTask = nil
             }
+        }
+    }
+
+    private func offerDirectoryChoice(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Framelet can't save the GIF"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Choose Folder...")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn {
+            showSettings()
+            chooseDirectory()
         }
     }
 
@@ -206,6 +291,7 @@ final class AppController: ObservableObject {
     func revealRecovery() { if let recoveryMovie { NSWorkspace.shared.activateFileViewerSelecting([recoveryMovie]) } }
 
     func discardRecovery() {
+        guard !isBusy else { return }
         let alert = NSAlert()
         alert.messageText = "Discard this recording?"
         alert.informativeText = "The temporary original will be deleted. This cannot be undone."
@@ -232,18 +318,14 @@ final class AppController: ObservableObject {
     }
 
     private func removeRecovery() {
-        if let recoveryMovie {
-            let directory = recoveryMovie.deletingLastPathComponent()
-            if directory.lastPathComponent.hasPrefix("Framelet-") { try? FileManager.default.removeItem(at: directory) }
-        }
+        if let recoveryMovie { Self.removeTake(recoveryMovie) }
         recoveryMovie = nil
-        recordingOptions = nil
         UserDefaults.standard.removeObject(forKey: "recoveryMovie")
     }
 
     private func interruptCapture() {
         if phase == .selecting { cancelSelection() }
-        if phase == .recording { stop() }
+        if phase == .recording || phase == .starting { stop() }
     }
 
     private func fail(_ message: String) { errorMessage = message; phase = .failed }
@@ -258,6 +340,7 @@ final class AppController: ObservableObject {
     }
 
     func showSettings() {
+        settings.refreshOutputStatus()
         if settingsWindow == nil {
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 540),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
@@ -301,14 +384,21 @@ final class AppController: ObservableObject {
 
     func canQuit() -> Bool {
         if phase == .selecting { cancelSelection() }
-        guard [.starting, .recording, .stopping, .exporting].contains(phase) else { return true }
+        guard [.starting, .recording, .stopping, .exporting].contains(phase), !(phase == .stopping && cancellingStart) else { return true }
         let alert = NSAlert()
         alert.messageText = phase == .exporting ? "A GIF is still being exported" : "A recording is in progress"
-        alert.informativeText = phase == .recording ? "Stop the recording before quitting Framelet." : "Wait for the current operation to finish, or cancel the export from the menu bar."
+        alert.informativeText = switch phase {
+        case .recording: "Stop the recording before quitting Framelet."
+        case .starting: "Capture is still starting. Cancel it to quit now, or keep Framelet open."
+        case .exporting: "Wait for the export to finish, or cancel it from the menu bar."
+        default: "Wait for the recording to finish saving."
+        }
         alert.addButton(withTitle: "Keep Framelet Open")
         if phase == .recording { alert.addButton(withTitle: "Stop Recording") }
+        if phase == .starting { alert.addButton(withTitle: "Cancel and Quit") }
         NSApp.activate()
-        if alert.runModal() == .alertSecondButtonReturn { stop() }
-        return false
+        guard alert.runModal() == .alertSecondButtonReturn else { return false }
+        stop()
+        return cancellingStart || !isBusy
     }
 }

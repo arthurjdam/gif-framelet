@@ -15,6 +15,7 @@ final class AppSettings: ObservableObject {
     @Published var maximumDuration: Int { didSet { defaults.set(maximumDuration, forKey: "maximumDuration") } }
     @Published var revealAfterExport: Bool { didSet { defaults.set(revealAfterExport, forKey: "revealAfterExport") } }
     @Published private(set) var outputDirectory: URL
+    @Published private(set) var outputStatus = FolderStatus.ok
     @Published private(set) var shortcut: Shortcut
 
     init(defaults: UserDefaults = .standard) {
@@ -33,11 +34,19 @@ final class AppSettings: ObservableObject {
         dimOutside = defaults.bool(forKey: "dimOutside")
         maximumDuration = min(max(defaults.integer(forKey: "maximumDuration"), 15), 120)
         revealAfterExport = defaults.bool(forKey: "revealAfterExport")
-        outputDirectory = defaults.data(forKey: "outputBookmark").flatMap {
-            var stale = false
-            return try? URL(resolvingBookmarkData: $0, options: [.withoutUI], bookmarkDataIsStale: &stale)
-        } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        let bookmark = defaults.data(forKey: "outputBookmark")
+        var stale = false
+        if let bookmark, let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI], bookmarkDataIsStale: &stale) {
+            outputDirectory = url
+        } else if let path = defaults.string(forKey: "outputPath")
+                    ?? bookmark.flatMap({ URL.resourceValues(forKeys: [.pathKey], fromBookmarkData: $0)?.path }) {
+            outputDirectory = URL(fileURLWithPath: path, isDirectory: true) // Keep the chosen folder so validation can report it.
+        } else {
+            outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        }
         shortcut = defaults.data(forKey: "shortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultShortcut
+        if stale { try? setDirectory(outputDirectory) }
+        refreshOutputStatus()
     }
 
     var exportOptions: ExportOptions {
@@ -47,12 +56,44 @@ final class AppSettings: ObservableObject {
     func setDirectory(_ url: URL) throws {
         let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
         defaults.set(bookmark, forKey: "outputBookmark")
+        defaults.set(url.path(percentEncoded: false), forKey: "outputPath")
         outputDirectory = url
+        refreshOutputStatus()
+    }
+
+    func refreshOutputStatus() { outputStatus = FolderStatus(of: outputDirectory) }
+
+    /// A readable explanation when GIFs can't be saved to the output folder, or nil when it is usable.
+    var outputProblem: String? {
+        let path = outputDirectory.path(percentEncoded: false)
+        switch outputStatus {
+        case .ok: return nil
+        case .missing: return "The output folder \"\(path)\" is missing, or its disk is not connected. Reconnect it or choose another folder, then retry the export."
+        case .notDirectory: return "The output location \"\(path)\" is a file, not a folder. Choose another folder, then retry the export."
+        case .inTrash: return "The output folder \"\(path)\" is in the Trash. Put it back or choose another folder, then retry the export."
+        case .notWritable: return "Framelet can't write to the output folder \"\(path)\". Choose another folder, then retry the export."
+        }
     }
 
     func setShortcut(_ value: Shortcut) {
         shortcut = value
         defaults.set(try? JSONEncoder().encode(value), forKey: "shortcut")
+    }
+}
+
+enum FolderStatus: Equatable {
+    case ok, missing, notDirectory, inTrash, notWritable
+
+    init(of url: URL) {
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        var relationship = FileManager.URLRelationship.other
+        let path = url.path(percentEncoded: false)
+        if !fileManager.fileExists(atPath: path, isDirectory: &isDirectory) { self = .missing }
+        else if !isDirectory.boolValue { self = .notDirectory }
+        else if (try? fileManager.getRelationship(&relationship, of: .trashDirectory, in: .userDomainMask, toItemAt: url)) != nil,
+                relationship == .contains { self = .inTrash }
+        else { self = fileManager.isWritableFile(atPath: path) ? .ok : .notWritable }
     }
 }
 

@@ -31,7 +31,10 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
 
 1. Press **Command-Shift-8**, or choose **Record Region** in the menu bar.
 2. Drag a rectangle on any connected display. Drag inside it to move it, or use its
-   eight handles to resize. Dimensions are displayed in screen points.
+   eight handles to resize. Arrow keys move it by 1 pt (Shift: 10 pt); Option-Arrow
+   grows or shrinks its right/top edge by 1 pt (Shift-Option: 10 pt). The toolbar shows
+   the size in screen points and the resulting GIF size in pixels, e.g.
+   `400 × 250 pt → 800 × 500 px` on a Retina display, capped by the maximum width setting.
 3. Press **Space** or **Return**, or click **Record**. **Escape** cancels selection.
 4. The border becomes solid red, controls disappear, and the surrounding screen dims subtly.
    The overlay becomes click-through so you can interact with the recorded app.
@@ -69,15 +72,22 @@ overwriting previous exports.
 
 Temporary frames are removed after export or cancellation. A failed/cancelled
 export retains the original movie for retry, including after a normal app restart.
-The recovery menu can reveal or explicitly discard it. The original is deleted
-after successful export. Recovery lives in macOS temporary storage, so it is not a
+A `recovery.json` sidecar written next to the movie when capture starts records the
+capture frame rate, so a retry after relaunch uses the fps the movie was recorded
+at (older recoveries without it use the current setting). The recovery menu can
+reveal or explicitly discard it. Framelet keeps one recovery: a pending recovery
+does not block recording, but Framelet first asks whether to replace it (or reveal
+it so you can copy it elsewhere). The previous recording is deleted only once the
+new one has been captured as a playable movie, so cancelling the selection or a
+failed capture keeps it. The original is
+deleted after successful export. Recovery lives in macOS temporary storage, so it is not a
 long-term backup. Interrupted capture may produce an incomplete movie. Large or
 long captures can need substantial temporary disk space.
 
 ## Verification
 
 ```sh
-swift run FrameletChecks
+swift test
 zsh scripts/build-app.sh
 dist/Framelet.app/Contents/MacOS/Framelet --self-test
 ```
@@ -108,5 +118,5 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 - [Sources/Framelet](Sources/Framelet): app lifecycle, menu bar, settings, shortcut,
   selection panels, ScreenCaptureKit recorder, exporter, and native self-checks.
 - [Sources/RecorderCore](Sources/RecorderCore): capture geometry and export options.
-- [Tests/RecorderCoreTests](Tests/RecorderCoreTests): standalone core checks.
+- [Tests/RecorderCoreTests](Tests/RecorderCoreTests): Swift Testing unit tests for the core (`swift test`).
 - [scripts/build-app.sh](scripts/build-app.sh): reproducible app bundle build.

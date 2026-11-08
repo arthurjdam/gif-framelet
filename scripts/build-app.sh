@@ -25,6 +25,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/
 cp "$bin_dir/Framelet" "$app/Contents/MacOS/Framelet"
 cp "$encoder_root/bin/gifski" "$app/Contents/Helpers/gifski"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+plutil -insert FrameletEncoderVersion -string "$encoder_version" "$app/Contents/Info.plist"
 cp THIRD_PARTY.md "$app/Contents/Resources/ThirdParty/NOTICE.md"
 
 mkdir -p .build/licenses

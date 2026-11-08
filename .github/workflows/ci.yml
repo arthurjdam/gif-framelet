@@ -1,0 +1,48 @@
+# Builds the Swift package and runs the RecorderCore unit tests.
+#
+# Caveats:
+# - Package.swift targets macOS 26, so the runner needs an Xcode 26+ SDK.
+#   `macos-26` is the newest GitHub-hosted macOS image. The job selects the
+#   newest installed /Applications/Xcode_*.app (not the image default) and
+#   fails early if its macOS SDK is older than 26. Bump `runs-on` when a newer
+#   image ships.
+# - Tests use Swift Testing (`import Testing`), which ships with Xcode 16+.
+# - gifski is not built here (the Rust build is slow), so neither the app bundle
+#   (scripts/build-app.sh) nor `Framelet --self-test` runs in CI. Those remain
+#   local/preflight steps; see RELEASING.md.
+# - `swift build` compiles the Framelet executable without the bundled encoder,
+#   which is fine: the encoder is only located at runtime.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          echo "Using $xcode with macOS SDK $sdk"
+          if [ "${sdk%%.*}" -lt 26 ]; then
+            echo "::error::macOS SDK $sdk is older than 26.0, required by Package.swift"
+            exit 1
+          fi
+          swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test

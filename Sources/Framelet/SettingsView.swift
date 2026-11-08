@@ -62,7 +62,7 @@ struct SettingsView: View {
                         Toggle("Loop forever", isOn: $settings.loops)
                     }.disabled(controller.isBusy)
                     Section("Encoder") {
-                        LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : "1.34.0")
+                        LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : GIFExporter.encoderVersion ?? "Unknown")
                         Link("Encoder & Licensing", destination: URL(string: "https://gif.ski")!)
                     }
                 }.formStyle(.grouped)
@@ -75,6 +75,9 @@ struct SettingsView: View {
                                 .lineLimit(1).truncationMode(.middle)
                                 .help(settings.outputDirectory.path)
                         }
+                        if let warning = folderWarning {
+                            Label(warning, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
                         Button("Choose Folder...", systemImage: "folder.badge.plus") { controller.chooseDirectory() }
                             .disabled(controller.phase == .exporting)
                         Toggle("Reveal GIF in Finder after export", isOn: $settings.revealAfterExport)
@@ -82,7 +85,7 @@ struct SettingsView: View {
                     Section("Activity") {
                         LabeledContent("Status", value: controller.statusText)
                         if controller.phase == .exporting {
-                            if controller.exportStage == "Preparing frames" {
+                            if controller.exportStage == .preparingFrames {
                                 ProgressView(value: controller.exportProgress)
                             } else { ProgressView().controlSize(.small) }
                             Button("Cancel Export", systemImage: "xmark") { controller.cancelExport() }
@@ -90,16 +93,27 @@ struct SettingsView: View {
                         if let message = controller.errorMessage {
                             Button("Show Error...", systemImage: "exclamationmark.triangle") { controller.showError(message) }
                         }
-                        if controller.recoveryMovie != nil && controller.phase != .exporting {
+                        if controller.recoveryMovie != nil && !controller.isBusy {
                             Button("Retry Export", systemImage: "arrow.clockwise") { controller.retryExport() }
                             Button("Reveal Original Recording", systemImage: "film") { controller.revealRecovery() }
                         }
                     }
                 }.formStyle(.grouped)
+                .onAppear { settings.refreshOutputStatus() }
             }
         }
         .padding(12)
         .frame(width: 520, height: 540)
+    }
+
+    private var folderWarning: String? {
+        switch settings.outputStatus {
+        case .ok: nil
+        case .missing: "This folder is missing or its disk is not connected."
+        case .notDirectory: "This location is a file, not a folder."
+        case .inTrash: "This folder is in the Trash."
+        case .notWritable: "Framelet can't write to this folder."
+        }
     }
 }
 
