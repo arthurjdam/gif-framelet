@@ -20,7 +20,11 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
     var onUnexpectedStop: ((any Error) -> Void)?
 
     func start(region: CaptureRegion, screen: NSScreen, fps: Int, maximumWidth: Int, showsCursor: Bool) async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content: SCShareableContent
+        do { content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) } catch {
+            throw cancelRequested ? CancellationError() : error
+        }
+        if cancelRequested { throw CancellationError() }
         let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         guard let display = content.displays.first(where: { $0.displayID == screenID }) else {
             throw RecorderError.message("The selected display is no longer connected.")
@@ -72,7 +76,7 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
             stream = nil
             output = nil
             try? FileManager.default.removeItem(at: directory)
-            throw error
+            throw cancelRequested ? CancellationError() : error
         }
     }
 
@@ -185,7 +189,7 @@ extension ScreenRecorder {
     }
 
     static func checkCancelDuringStart() async throws {
-        for cancelEarly in [true, false] {
+        for (cancelEarly, startFails) in [(true, false), (false, false), (false, true)] {
             let recorder = ScreenRecorder()
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-cancel-check-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -199,14 +203,15 @@ extension ScreenRecorder {
                     started = true
                     recorder.cancel()
                     await Task.yield()
+                    if startFails { throw RecorderError.message("Capture failed after the display changed") }
                 } stopCapture: { stopped = true }
                 throw RecorderError.message("Start must fail with CancellationError after a stop request")
             } catch is CancellationError {}
             recorder.finishedRecording()
             recorder.streamStopped(with: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
-            guard started != cancelEarly, stopped == started, !notified,
+            guard started != cancelEarly, stopped == (started && !startFails), !notified,
                   !FileManager.default.fileExists(atPath: directory.path) else {
-                throw RecorderError.message("Stop requested before start completes must stop any started capture, remove its directory, and stay silent")
+                throw RecorderError.message("Stop requested before start completes must stop any started capture, remove its directory, hide start errors, and stay silent")
             }
         }
         print("PASS: stop requested before start completes stops capture and removes temporary files")
