@@ -14,16 +14,21 @@ final class AppSettings: ObservableObject {
     @Published var dimOutside: Bool { didSet { defaults.set(dimOutside, forKey: "dimOutside") } }
     @Published var maximumDuration: Int { didSet { defaults.set(maximumDuration, forKey: "maximumDuration") } }
     @Published var revealAfterExport: Bool { didSet { defaults.set(revealAfterExport, forKey: "revealAfterExport") } }
+    /// Seconds to count down before capture starts; 0 starts immediately.
+    @Published var countdown: Int { didSet { defaults.set(countdown, forKey: "countdown") } }
+    @Published var previewBeforeExport: Bool { didSet { defaults.set(previewBeforeExport, forKey: "previewBeforeExport") } }
+    @Published var copyAfterExport: Bool { didSet { defaults.set(copyAfterExport, forKey: "copyAfterExport") } }
     @Published private(set) var outputDirectory: URL
     @Published private(set) var outputStatus = FolderStatus.ok
     @Published private(set) var shortcut: Shortcut
+    var lastRegion: LastRegion? { didSet { defaults.set(try? JSONEncoder().encode(lastRegion), forKey: "lastRegion") } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [
             "fps": 15, "maximumWidth": 1280, "quality": 80.0, "fast": false,
             "loops": true, "showsCursor": true, "dimOutside": true,
-            "maximumDuration": 60, "revealAfterExport": true
+            "maximumDuration": 60, "revealAfterExport": true, "previewBeforeExport": true, "copyAfterExport": false
         ])
         fps = defaults.integer(forKey: "fps")
         maximumWidth = defaults.integer(forKey: "maximumWidth")
@@ -34,6 +39,9 @@ final class AppSettings: ObservableObject {
         dimOutside = defaults.bool(forKey: "dimOutside")
         maximumDuration = min(max(defaults.integer(forKey: "maximumDuration"), 15), 120)
         revealAfterExport = defaults.bool(forKey: "revealAfterExport")
+        countdown = [3, 5].contains(defaults.integer(forKey: "countdown")) ? defaults.integer(forKey: "countdown") : 0
+        previewBeforeExport = defaults.bool(forKey: "previewBeforeExport")
+        copyAfterExport = defaults.bool(forKey: "copyAfterExport")
         let bookmark = defaults.data(forKey: "outputBookmark")
         var stale = false
         if let bookmark, let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI], bookmarkDataIsStale: &stale) {
@@ -45,6 +53,7 @@ final class AppSettings: ObservableObject {
             outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
         }
         shortcut = defaults.data(forKey: "shortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultShortcut
+        lastRegion = defaults.data(forKey: "lastRegion").flatMap { try? JSONDecoder().decode(LastRegion.self, from: $0) }
         if stale { try? setDirectory(outputDirectory) }
         refreshOutputStatus()
     }

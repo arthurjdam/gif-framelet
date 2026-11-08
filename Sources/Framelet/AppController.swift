@@ -1,27 +1,39 @@
 import AppKit
+import CoreMedia
 import SwiftUI
 import RecorderCore
 
 @MainActor
 final class AppController: ObservableObject {
-    enum Phase { case idle, selecting, starting, recording, stopping, exporting, failed }
+    enum Phase { case idle, selecting, countingDown, starting, recording, stopping, previewing, exporting, failed }
     let settings = AppSettings()
     let shortcut = GlobalShortcut()
     private let selector = RegionSelector()
+    private let notifier = ExportNotifier()
     private var recorder: ScreenRecorder?
     private var settingsWindow: NSWindow?
     private var timer: Timer?
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
+    private var countdownTask: Task<Void, Never>?
+    private var preview: PreviewWindow?
     private var cancellingStart = false
-    @Published private(set) var phase = Phase.idle
+    @Published private(set) var phase = Phase.idle {
+        didSet {
+            // The discard hot key exists only while recording; every exit from .recording goes through here.
+            guard (phase == .recording) != (oldValue == .recording) else { return }
+            if phase == .recording { try? shortcut.registerDiscard(settings.shortcut) } else { shortcut.unregisterDiscard() }
+        }
+    }
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var countdownRemaining = 0
     @Published private(set) var exportProgress = 0.0
     @Published private(set) var exportStage = ExportStage.preparingFrames
     @Published private(set) var errorMessage: String?
     @Published private(set) var recoveryMovie: URL?
     @Published private(set) var lastExport: URL?
+    @Published private(set) var lastExportSize: String?
     @Published private(set) var editingShortcut = false
 
     var elapsedText: String { String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60) }
@@ -30,16 +42,25 @@ final class AppController: ObservableObject {
         switch phase {
         case .idle: hasPermission ? "Ready to record" : "Screen Recording permission needed"
         case .selecting: "Selecting a region"
+        case .countingDown: "Recording in \(countdownRemaining)"
         case .starting: "Starting recording"
         case .recording: "Recording \(elapsedText)"
         case .stopping: "Finishing recording"
+        case .previewing: "Previewing recording"
         case .exporting: exportStage == .preparingFrames ? "\(exportStage.title) \(Int(exportProgress * 100))%" : exportStage.title
         case .failed: recoveryMovie == nil ? "Recording unavailable" : "Recording saved for retry"
         }
     }
 
+    /// Sets the notification delegate before launch finishes, so a notification click that relaunches the app is delivered.
+    func activateNotifications() {
+        notifier.onShowError = { [weak self] in if let message = self?.errorMessage { self?.showError(message) } }
+        notifier.activate()
+    }
+
     func launch() {
         shortcut.onPress = { [weak self] in self?.trigger() }
+        shortcut.onDiscard = { [weak self] in self?.discard() }
         selector.onCancel = { [weak self] in self?.cancelSelection() }
         selector.onRecord = { [weak self] region, screen in self?.start(region: region, screen: screen) }
         do { try shortcut.register(settings.shortcut) } catch { errorMessage = error.localizedDescription }
@@ -73,20 +94,49 @@ final class AppController: ObservableObject {
         switch phase {
         case .starting, .recording: stop()
         case .selecting: cancelSelection()
+        case .countingDown: cancelCountdown()
         case .idle, .failed:
-            guard ensurePermission() else { showSettings(); return }
-            guard GIFExporter.bundledEncoder != nil else {
-                fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
-                showSettings()
-                return
-            }
-            guard recoveryMovie == nil || confirmReplacingRecovery() else { return }
-            errorMessage = nil
+            guard prepareToRecord() else { return }
             phase = .selecting
             settingsWindow?.orderOut(nil)
-            selector.show(maximumWidth: settings.maximumWidth)
+            selector.show(maximumWidth: settings.maximumWidth, preselect: lastRegion?.region)
+        case .previewing: preview?.show()
         case .stopping, .exporting: break
         }
+    }
+
+    /// Records the stored region again without drawing, through the same checks and start path as trigger().
+    func recordLastRegion() {
+        guard !editingShortcut, phase == .idle || phase == .failed, lastRegion != nil, prepareToRecord() else { return }
+        guard let last = lastRegion else { // The display may have changed while the replace-recovery prompt was open.
+            errorMessage = "The last region's display is no longer connected or has changed. Choose Record Region instead."
+            return
+        }
+        phase = .selecting
+        settingsWindow?.orderOut(nil)
+        selector.show(region: last.region, on: last.screen)
+        start(region: last.region, screen: last.screen)
+    }
+
+    /// The stored last region and its screen, or nil when that display is gone, has changed geometry, or the rect no longer fits.
+    var lastRegion: (region: CaptureRegion, screen: NSScreen)? {
+        guard let saved = settings.lastRegion,
+              let screen = NSScreen.screens.first(where: { $0.displayID == saved.displayID }),
+              let region = saved.region(displays: [saved.displayID: screen.frame]) else { return nil }
+        return (region, screen)
+    }
+
+    /// Checks shared by every way of starting a recording: permission, the bundled encoder, and the replace-recovery prompt.
+    private func prepareToRecord() -> Bool {
+        guard ensurePermission() else { showSettings(); return false }
+        guard GIFExporter.bundledEncoder != nil else {
+            fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
+            showSettings()
+            return false
+        }
+        guard recoveryMovie == nil || confirmReplacingRecovery() else { return false }
+        errorMessage = nil
+        return true
     }
 
     /// Framelet keeps one recovery. Asked before the selector opens; the previous take is only deleted once a new movie exists.
@@ -111,8 +161,36 @@ final class AppController: ObservableObject {
         phase = restingPhase
     }
 
+    /// Cancels a running countdown. No recorder exists yet, so nothing else needs unwinding.
+    func cancelCountdown() {
+        guard phase == .countingDown else { return }
+        countdownTask?.cancel()
+        countdownTask = nil
+        selector.close()
+        phase = restingPhase
+    }
+
+    /// The overlay turns click-through and the previous app is reactivated; capture starts when the count reaches 0.
+    private func startCountdown(region: CaptureRegion, screen: NSScreen) {
+        phase = .countingDown
+        selector.setRecording(dimOutside: settings.dimOutside)
+        let seconds = settings.countdown
+        countdownTask = Task {
+            for remaining in stride(from: seconds, to: 0, by: -1) {
+                countdownRemaining = remaining
+                selector.setCountdown(remaining)
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, phase == .countingDown else { return }
+            }
+            countdownTask = nil
+            guard NSScreen.screens.contains(screen) else { cancelCountdown(); return }
+            start(region: region, screen: screen)
+        }
+    }
+
     private func start(region: CaptureRegion, screen: NSScreen) {
-        guard phase == .selecting else { return }
+        guard phase == .selecting || phase == .countingDown else { return }
+        if phase == .selecting && settings.countdown > 0 { startCountdown(region: region, screen: screen); return }
         phase = .starting
         let options = settings.exportOptions
         let recorder = ScreenRecorder()
@@ -143,10 +221,14 @@ final class AppController: ObservableObject {
                 if let movie = recorder.movieURL { try? RecoveryInfo(fps: options.fps).write(besides: movie) }
                 guard phase == .starting, self.recorder === recorder else {
                     await recorder.discard()
-                    if self.recorder === recorder { self.recorder = nil }
+                    guard self.recorder === recorder else { return }
+                    self.recorder = nil
+                    cancellingStart = false
+                    if phase == .stopping { phase = restingPhase }
                     return
                 }
                 phase = .recording
+                if let id = screen.displayID { settings.lastRegion = LastRegion(region: region, displayID: id) }
                 elapsed = 0
                 startedAt = Date()
                 let limit = settings.maximumDuration
@@ -174,6 +256,7 @@ final class AppController: ObservableObject {
     }
 
     func stop() {
+        if phase == .countingDown { cancelCountdown(); return }
         guard phase == .recording || phase == .starting, let recorder else { return }
         if phase == .starting {
             phase = .stopping
@@ -194,12 +277,29 @@ final class AppController: ObservableObject {
                     fail("The recording contains no usable video." + (recoveryMovie == nil ? " Record for a little longer and try again." : " The previous recording is still available for retry."))
                     return
                 }
-                export(movie)
+                if settings.previewBeforeExport { showPreview(movie) } else { export(movie) }
             } catch {
                 if let movie = recorder.movieURL { _ = await keepForRetry(movie) }
                 self.recorder = nil
                 fail(error.localizedDescription)
             }
+        }
+    }
+
+    /// Stops capture and deletes the take without exporting or touching the recovery (no keepForRetry).
+    /// Before recording begins (.starting, and a countdown) it is stop()'s cancel path; stop() ignores other phases.
+    /// A system stop or the time limit can't export the take meanwhile: stop() requires .recording and the timer is gone.
+    func discard() {
+        guard phase == .recording, let recorder else { stop(); return }
+        phase = .stopping
+        timer?.invalidate()
+        timer = nil
+        selector.close()
+        Task {
+            _ = try? await recorder.stop()
+            if let movie = recorder.movieURL { Self.removeTake(movie) }
+            self.recorder = nil
+            phase = restingPhase
         }
     }
 
@@ -232,7 +332,35 @@ final class AppController: ObservableObject {
         export(movie)
     }
 
-    private func export(_ movie: URL) {
+    /// Opens the preview between keepForRetry and export. The take is already the recovery, so closing keeps it for retry.
+    private func showPreview(_ movie: URL) {
+        phase = .previewing
+        let preview = PreviewWindow(movie: movie, options: exportOptions(for: movie))
+        preview.onFinish = { [weak self] choice in self?.finishPreview(choice) }
+        self.preview = preview
+        preview.show()
+    }
+
+    /// The window has stopped and released its player before this runs, so the take can be deleted or read.
+    private func finishPreview(_ choice: PreviewWindow.Choice) {
+        preview = nil
+        guard phase == .previewing else { return }
+        guard let movie = recoveryMovie else { phase = restingPhase; return }
+        switch choice {
+        case .export(let range): export(movie, range: range)
+        case .discard: removeRecovery(); errorMessage = nil; phase = restingPhase
+        case .keep: phase = restingPhase
+        }
+    }
+
+    /// Export settings, with the fps the take was captured at.
+    private func exportOptions(for movie: URL) -> ExportOptions {
+        let selected = settings.exportOptions
+        return ExportOptions(fps: RecoveryInfo.read(besides: movie)?.fps ?? selected.fps, maximumWidth: selected.maximumWidth,
+                             quality: selected.quality, fast: selected.fast, loops: selected.loops)
+    }
+
+    private func export(_ movie: URL, range: CMTimeRange? = nil) {
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
         settings.refreshOutputStatus()
         if let problem = settings.outputProblem {
@@ -245,32 +373,47 @@ final class AppController: ObservableObject {
         exportProgress = 0
         exportStage = .preparingFrames
         let outputDirectory = settings.outputDirectory
-        let selected = settings.exportOptions
-        let fps = RecoveryInfo.read(besides: movie)?.fps ?? selected.fps
-        let options = ExportOptions(fps: fps, maximumWidth: selected.maximumWidth,
-                                    quality: selected.quality, fast: selected.fast, loops: selected.loops)
+        let options = exportOptions(for: movie)
         exportTask = Task {
             do {
-                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { progress, stage in
+                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options, range: range) { progress, stage in
                     await MainActor.run {
                         self.exportProgress = progress
                         self.exportStage = stage
                     }
                 }
+                let summary = await Self.summary(of: url)
                 lastExport = url
+                lastExportSize = summary.map { GIFSummary.fileSize($0.bytes) }
                 removeRecovery()
-                phase = .idle
+                phase = restingPhase
                 exportTask = nil
                 if settings.revealAfterExport { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                if settings.copyAfterExport { Self.copy(url) }
+                notifier.exported(url, summary: summary)
             } catch is CancellationError {
                 fail("Export cancelled. The original recording is available for retry.")
                 exportTask = nil
             } catch {
                 settings.refreshOutputStatus()
-                fail(settings.outputProblem ?? error.localizedDescription)
                 exportTask = nil
+                if let problem = settings.outputProblem {
+                    fail(problem)
+                    offerDirectoryChoice(problem)
+                } else {
+                    fail(error.localizedDescription)
+                    notifier.failed(error.localizedDescription)
+                }
             }
         }
+    }
+
+    /// Reads the saved GIF's size, dimensions and frame-delay duration off the main actor.
+    nonisolated private static func summary(of url: URL) async -> GIFSummary? { GIFSummary(contentsOf: url) }
+
+    static func copy(_ url: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([url as NSURL])
     }
 
     private func offerDirectoryChoice(_ message: String) {
@@ -324,7 +467,9 @@ final class AppController: ObservableObject {
     }
 
     private func interruptCapture() {
-        if phase == .selecting { cancelSelection() }
+        objectWillChange.send() // Display changes can enable or disable Record Last Region.
+        cancelSelection()
+        cancelCountdown()
         if phase == .recording || phase == .starting { stop() }
     }
 
@@ -369,7 +514,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    func beginShortcutEditing() { editingShortcut = true; shortcut.unregister() }
+    func beginShortcutEditing() { editingShortcut = true; shortcut.unregister(); shortcut.unregisterDiscard() }
 
     func endShortcutEditing(_ value: Shortcut?) {
         editingShortcut = false
@@ -383,7 +528,8 @@ final class AppController: ObservableObject {
     }
 
     func canQuit() -> Bool {
-        if phase == .selecting { cancelSelection() }
+        cancelSelection()
+        cancelCountdown()
         guard [.starting, .recording, .stopping, .exporting].contains(phase), !(phase == .stopping && cancellingStart) else { return true }
         let alert = NSAlert()
         alert.messageText = phase == .exporting ? "A GIF is still being exported" : "A recording is in progress"
@@ -401,4 +547,8 @@ final class AppController: ObservableObject {
         stop()
         return cancellingStart || !isBusy
     }
+}
+
+extension NSScreen {
+    var displayID: CGDirectDisplayID? { deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID }
 }

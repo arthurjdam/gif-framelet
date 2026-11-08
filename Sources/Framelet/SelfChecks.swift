@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Carbon.HIToolbox
 import ImageIO
 import RecorderCore
 import Synchronization
@@ -33,6 +34,21 @@ enum SelfChecks {
         let third = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: once) { _, _ in }
         try inspectGIF(third, loops: false)
         print("PASS: single-play GIF and fast encoding")
+
+        let range = CMTimeRange(start: CMTime(value: 1, timescale: 2), end: CMTime(value: 3, timescale: 2))
+        let trimmed = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options, range: range) { _, _ in }
+        try inspectGIF(trimmed, loops: true, frames: 9...11, seconds: 1)
+        guard let source = CGImageSourceCreateWithURL(trimmed as CFURL, nil),
+              let firstFrame = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let lastFrame = CGImageSourceCreateImageAtIndex(source, CGImageSourceGetCount(source) - 1, nil) else {
+            throw RecorderError.message("Trimmed GIF cannot be decoded")
+        }
+        let untrimmed = CGImageSourceCreateWithURL(first as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        try require(untrimmed.map { isRed($0, x: 34, y: 96) && !isRed($0, x: 75, y: 96) } == true, "Untrimmed GIF must start at fixture frame 0")
+        // Fixture frame n draws a 44 px circle at x = 12 + 12n; these pixel pairs are both red only for frames 5 and 14.
+        try require(isRed(firstFrame, x: 75, y: 96) && isRed(firstFrame, x: 110, y: 96), "Trimmed GIF must start at fixture frame 5 (0.5 s)")
+        try require(isRed(lastFrame, x: 183, y: 96) && isRed(lastFrame, x: 221, y: 96), "Trimmed GIF must end at fixture frame 14 (1.4 s)")
+        print("PASS: trimmed export of 0.5-1.5 s contains only that range (\(CGImageSourceGetCount(source)) frames, ~1 s)")
 
         let cancelled = Task {
             try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { _, _ in }
@@ -112,6 +128,29 @@ enum SelfChecks {
         try require(restored.outputDirectory.standardizedFileURL == outputDirectory.standardizedFileURL, "Folder bookmark must persist")
         print("PASS: default shortcut, settings persistence, output folder bookmark")
 
+        try require(restored.lastRegion == nil, "No last region must be stored by default")
+        guard let captured = CaptureRegion(rect: CGRect(x: -1800, y: 1000, width: 400, height: 250),
+                                           displayBounds: CGRect(x: -1920, y: 900, width: 1920, height: 1080)) else {
+            throw RecorderError.message("Fixture region must be valid")
+        }
+        settings.lastRegion = LastRegion(region: captured, displayID: 3)
+        let reloaded = AppSettings(defaults: defaults).lastRegion
+        try require(reloaded == settings.lastRegion, "The last region must persist across launches")
+        try require(reloaded?.region(displays: [3: captured.displayBounds]) == captured, "A restored region on an unchanged display must be valid")
+        try require(reloaded?.region(displays: [3: CGRect(x: -1920, y: 900, width: 1280, height: 800)]) == nil, "A resized display must invalidate it")
+        try require(reloaded?.region(displays: [1: captured.displayBounds]) == nil, "A disconnected display must invalidate it")
+        settings.lastRegion = nil
+        try require(AppSettings(defaults: defaults).lastRegion == nil, "Clearing the last region must persist")
+        try RegionSelector.checkPreselection()
+        print("PASS: last region persistence round-trip and validity rules")
+
+        let discard = Shortcut.defaultShortcut.discardVariant
+        try require(discard?.modifiers == UInt32(cmdKey | shiftKey | optionKey) && discard?.keyCode == Shortcut.defaultShortcut.keyCode, "Discard must add Option to the shortcut")
+        try require(discard?.display == "\u{2325}\u{21e7}\u{2318}8", "Discard shortcut must display as Option-Shift-Command-8")
+        try require(discard?.discardVariant == nil, "A shortcut that already contains Option must have no discard variant")
+        try require(GlobalShortcut.stopID == 1 && GlobalShortcut.discardID == 2, "Hot-key ids must be stop = 1 and discard = 2")
+        print("PASS: discard shortcut adds Option, none when Option is already used; hot-key ids")
+
         let locked = directory.appendingPathComponent("locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o555])
         try require(FolderStatus(of: outputDirectory) == .ok, "A writable folder must validate")
@@ -142,31 +181,39 @@ enum SelfChecks {
         try require(gone.outputProblem?.contains(gone.outputDirectory.path(percentEncoded: false)) == true, "The problem must name the folder")
         print("PASS: output folder validation, stale bookmark refresh, missing folder reported")
 
+        let credits = AboutPanel.credits
+        try require(AboutPanel.version != nil && credits.string.contains("gifski \(GIFExporter.encoderVersion ?? "?")"), "About must show the version and gifski credit")
+        try require(AboutPanel.noticeURL != nil && credits.string.contains("Third-party notices"), "About must link the bundled NOTICE")
+        try require(LoginItem.isAvailable, "Login item must be available from the app bundle") // Never registers here.
+        print("PASS: About version, gifski credit, NOTICE link; login item available")
+
         let snapshots = ProcessInfo.processInfo.environment["FRAMELET_TEST_ARTIFACTS"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? directory
         try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
         try RegionSelector.checkInteractions(snapshots: snapshots)
     }
 
-    private static func inspectGIF(_ url: URL, loops: Bool) throws {
+    private static func inspectGIF(_ url: URL, loops: Bool, frames: ClosedRange<Int> = 18...21, seconds: Double = 2) throws {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              let properties = CGImageSourceCopyProperties(source, nil) as? [String: Any] else {
+              let properties = CGImageSourceCopyProperties(source, nil) as? [String: Any],
+              let summary = GIFSummary(contentsOf: url) else {
             throw RecorderError.message("GIF cannot be decoded")
         }
-        try require(image.width == 320 && image.height == 180, "GIF has unexpected dimensions")
+        try require(summary.width == 320 && summary.height == 180, "GIF has unexpected dimensions")
         let count = CGImageSourceGetCount(source)
-        try require(count >= 18 && count <= 21, "GIF must contain the animation's frames; got \(count)")
+        try require(frames.contains(count), "GIF must contain the animation's frames; got \(count)")
         let gif = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any]
         let repeatCount = gif?[kCGImagePropertyGIFLoopCount as String] as? Int
         try require(loops ? repeatCount == 0 : repeatCount != 0, "GIF loop metadata is incorrect")
-        var duration = 0.0
-        for index in 0..<count {
-            let frameProperties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any]
-            let frameGIF = frameProperties?[kCGImagePropertyGIFDictionary as String] as? [String: Any]
-            duration += frameGIF?[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double
-                ?? frameGIF?[kCGImagePropertyGIFDelayTime as String] as? Double ?? 0
-        }
-        try require(abs(duration - 2) <= 0.15, "GIF duration is \(duration), expected 2 seconds")
+        try require(abs(summary.duration - seconds) <= 0.15, "GIF duration is \(summary.duration), expected \(seconds) seconds")
+        try require(summary.bytes > 0 && summary.text().contains("320\u{00D7}180"), "GIF summary is incomplete: \(summary.text())")
+    }
+
+    private static func isRed(_ image: CGImage, x: Int, y: Int) -> Bool {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        return pixel[0] > 180 && pixel[1] < 100 && pixel[2] < 100
     }
 
     private static func makeMovie(at url: URL, frames: Int = 20, fps: Int = 10) async throws {

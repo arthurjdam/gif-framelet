@@ -28,12 +28,18 @@ struct SettingsView: View {
                             Text("1 minute").tag(60)
                             Text("2 minutes").tag(120)
                         }
+                        Picker("Countdown", selection: $settings.countdown) {
+                            Text("Off").tag(0)
+                            Text("3 seconds").tag(3)
+                            Text("5 seconds").tag(5)
+                        }
                     }.disabled(controller.isBusy)
                     Section("Keyboard Shortcut") {
                         LabeledContent("Select region / stop recording") {
                             ShortcutRecorder(controller: controller, shortcut: settings.shortcut)
                                 .frame(width: 150, height: 28)
                         }
+                        Text(settings.shortcut.discardHint).font(.caption).foregroundStyle(.secondary)
                         Button("Restore Default", systemImage: "arrow.counterclockwise") {
                             controller.endShortcutEditing(.defaultShortcut)
                         }
@@ -60,6 +66,8 @@ struct SettingsView: View {
                         Toggle("Faster encoding", isOn: $settings.fast)
                             .help("Uses less encoding effort; files may be larger and slightly lower quality.")
                         Toggle("Loop forever", isOn: $settings.loops)
+                        Toggle("Preview before export", isOn: $settings.previewBeforeExport)
+                            .help("After recording, play the take and trim its start and end before encoding.")
                     }.disabled(controller.isBusy)
                     Section("Encoder") {
                         LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : GIFExporter.encoderVersion ?? "Unknown")
@@ -81,6 +89,7 @@ struct SettingsView: View {
                         Button("Choose Folder...", systemImage: "folder.badge.plus") { controller.chooseDirectory() }
                             .disabled(controller.phase == .exporting)
                         Toggle("Reveal GIF in Finder after export", isOn: $settings.revealAfterExport)
+                        Toggle("Copy GIF to clipboard after export", isOn: $settings.copyAfterExport)
                     }
                     Section("Activity") {
                         LabeledContent("Status", value: controller.statusText)
@@ -101,6 +110,7 @@ struct SettingsView: View {
                 }.formStyle(.grouped)
                 .onAppear { settings.refreshOutputStatus() }
             }
+            Tab("General", systemImage: "gearshape") { GeneralSettings() }
         }
         .padding(12)
         .frame(width: 520, height: 540)

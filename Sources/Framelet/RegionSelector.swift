@@ -10,13 +10,18 @@ final class RegionSelector {
     var onRecord: ((CaptureRegion, NSScreen) -> Void)?
     var onCancel: (() -> Void)?
 
-    func show(maximumWidth: Int) {
+    /// Opens selection on every display. `preselect` starts selected, with its toolbar, on the display it belongs to.
+    func show(maximumWidth: Int, preselect: CaptureRegion? = nil) {
         close()
         previousApp = NSWorkspace.shared.frontmostApplication
         NSApp.activate()
         for screen in NSScreen.screens {
             let panel = SelectionPanel(screen: screen)
             panel.selectionView.maximumWidth = maximumWidth
+            if let preselect, preselect.displayBounds == screen.frame {
+                panel.selectionView.select(preselect.localRect)
+                selectedPanel = panel
+            }
             panel.selectionView.onSelect = { [weak self, weak panel] in
                 guard let self, let panel else { return }
                 self.selectedPanel = panel
@@ -26,11 +31,7 @@ final class RegionSelector {
                 panel.makeKey()
             }
             panel.selectionView.onRecord = { [weak self, weak panel] rect in
-                guard let self, let panel,
-                      let region = CaptureRegion(
-                        rect: rect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY),
-                        displayBounds: screen.frame
-                      ) else { return }
+                guard let self, let panel, let region = CaptureRegion(localRect: rect, displayBounds: screen.frame) else { return }
                 self.selectedPanel = panel
                 self.onRecord?(region, screen)
             }
@@ -39,6 +40,19 @@ final class RegionSelector {
             panel.orderFrontRegardless()
             if screen.frame.contains(NSEvent.mouseLocation) { panel.makeKey() }
         }
+        selectedPanel?.makeKey()
+    }
+
+    /// Shows only `region`'s border on `screen`, with no toolbar or drawing, ready for `setRecording`.
+    func show(region: CaptureRegion, on screen: NSScreen) {
+        close()
+        previousApp = NSWorkspace.shared.frontmostApplication
+        let panel = SelectionPanel(screen: screen)
+        panel.ignoresMouseEvents = true
+        panel.selectionView.select(region.localRect, toolbar: false)
+        panels = [panel]
+        selectedPanel = panel
+        panel.orderFrontRegardless()
     }
 
     func setRecording(dimOutside: Bool) {
@@ -52,7 +66,11 @@ final class RegionSelector {
             }
         }
         previousApp?.activate()
+        previousApp = nil // Called again when a countdown ends; don't pull focus back from an app the user switched to.
     }
+
+    /// Shows a large number in the locked selection (after `setRecording`); nil hides it.
+    func setCountdown(_ value: Int?) { selectedPanel?.selectionView.setCountdown(value) }
 
     func close() {
         for panel in panels {
@@ -111,6 +129,7 @@ private final class SelectionView: NSView {
     private var phase: CGFloat = 0
     private var timer: Timer?
     private var recording = false
+    private var countdown: Int?
     private var dimOutside = true
     private let toolbar = NSVisualEffectView()
     let dimensions = NSTextField(labelWithString: "")
@@ -162,6 +181,13 @@ private final class SelectionView: NSView {
 
     func stopAnimation() { timer?.invalidate(); timer = nil }
 
+    func select(_ rect: CGRect, toolbar: Bool = true) {
+        selection = rect
+        if toolbar { updateToolbar() }
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
     func clear() {
         selection = .zero
         toolbar.isHidden = true
@@ -170,11 +196,14 @@ private final class SelectionView: NSView {
 
     func setRecording(dimOutside: Bool) {
         recording = true
+        countdown = nil
         self.dimOutside = dimOutside
         stopAnimation()
         toolbar.isHidden = true
         needsDisplay = true
     }
+
+    func setCountdown(_ value: Int?) { countdown = value; needsDisplay = true }
 
     override func resetCursorRects() {
         guard !recording else { return }
@@ -206,7 +235,7 @@ private final class SelectionView: NSView {
         guard !selection.isEmpty else { return }
         let border = NSBezierPath(rect: selection.insetBy(dx: -1, dy: -1))
         border.lineWidth = 2
-        if recording {
+        if recording && countdown == nil {
             NSColor.systemRed.setStroke()
             border.stroke()
             return
@@ -216,6 +245,16 @@ private final class SelectionView: NSView {
         NSColor.black.withAlphaComponent(0.85).setStroke()
         border.setLineDash([6, 6], count: 2, phase: phase)
         border.stroke()
+        if let countdown {
+            let number = NSAttributedString(string: "\(countdown)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: min(selection.width, selection.height, 300) * 0.6, weight: .bold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.75),
+                .strokeColor: NSColor.black.withAlphaComponent(0.45), .strokeWidth: -3
+            ])
+            let size = number.size()
+            number.draw(at: CGPoint(x: selection.midX - size.width / 2, y: selection.midY - size.height / 2))
+            return
+        }
         for point in handles {
             let handle = NSBezierPath(roundedRect: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8), xRadius: 2, yRadius: 2)
             NSColor.white.setFill()
@@ -408,13 +447,22 @@ extension RegionSelector {
                 throw RecorderError.message("Could not create overlay snapshot")
             }
             view.cacheDisplay(in: view.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+            let counting = name == "countdown.png" // The number covers the centre, so probe inside the selection's corner.
             let outsideAlpha = bitmap.colorAt(x: 20, y: 20)?.alphaComponent ?? 1
-            let insideAlpha = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.alphaComponent ?? 1
+            let insideAlpha = (counting ? bitmap.colorAt(x: Int(150 * scale), y: Int((600 - 115) * scale))
+                               : bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2))?.alphaComponent ?? 1
             guard insideAlpha < 0.01, outsideAlpha > 0.01, outsideAlpha < 0.3 else {
                 throw RecorderError.message("The overlay must be transparent inside the selection and subtly dimmed outside")
             }
+            let number = stride(from: 305, to: 385, by: 2).flatMap { x in stride(from: 200, to: 280, by: 2).compactMap { y in
+                bitmap.colorAt(x: Int(CGFloat(x) * scale), y: Int((600 - CGFloat(y)) * scale))?.alphaComponent
+            } }.filter { $0 > 0.3 }
+            guard counting ? number.count > 100 && number.allSatisfy({ $0 < 0.9 }) : number.isEmpty else {
+                throw RecorderError.message(counting ? "The countdown must show a large translucent number in the selection centre"
+                                                     : "Only the countdown overlay may draw in the selection centre")
+            }
             if name == "recording.png" {
-                let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
                 for vertical in 160..<300 {
                     guard let color = bitmap.colorAt(x: Int(139 * scale), y: Int((600 - CGFloat(vertical)) * scale))?.usingColorSpace(.deviceRGB),
                           color.alphaComponent > 0.8,
@@ -432,11 +480,58 @@ extension RegionSelector {
 
         try snapshot("selection.png")
         recorded = nil
+        cancelled = false
+        view.setRecording(dimOutside: true)
+        view.setCountdown(3)
+        key(kVK_LeftArrow, .shift, times: 5); key(kVK_Space); key(kVK_Escape)
+        guard recorded == nil, !cancelled else { throw RecorderError.message("Countdown overlay must ignore selection keys") }
+        try snapshot("countdown.png")
         view.setRecording(dimOutside: true)
         key(kVK_LeftArrow, .shift, times: 5); key(kVK_UpArrow, .option)
         key(kVK_Space)
         guard recorded == nil else { throw RecorderError.message("Recording overlay must not restart capture") }
         try snapshot("recording.png")
-        print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")
+        print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, countdown number, overlay alpha pixels, and solid recording border")
+    }
+
+    static func checkPreselection() throws {
+        let display = CGRect(x: -1920, y: 900, width: 1920, height: 1080)
+        guard let last = CaptureRegion(rect: CGRect(x: -1800, y: 1000, width: 400, height: 250), displayBounds: display) else {
+            throw RecorderError.message("Fixture region must be valid")
+        }
+        let view = SelectionView(frame: CGRect(origin: .zero, size: display.size))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { view.stopAnimation(); window.close() }
+        var recorded: CGRect?
+        view.onRecord = { recorded = $0 }
+        func pressReturn() {
+            view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false,
+                                                keyCode: UInt16(kVK_Return))!)
+        }
+        func mouse(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+
+        view.scale = 2
+        view.select(last.localRect)
+        guard view.dimensions.stringValue == "400 \u{00d7} 250 pt \u{2192} 800 \u{00d7} 500 px" else {
+            throw RecorderError.message("A pre-selection must show the toolbar label, got \(view.dimensions.stringValue)")
+        }
+        pressReturn()
+        guard let first = recorded, CaptureRegion(localRect: first, displayBounds: display) == last else {
+            throw RecorderError.message("Return must record the pre-selected region on a negative-origin display, got \(String(describing: recorded))")
+        }
+        view.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 1000, y: 600)))
+        view.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 1100, y: 700)))
+        view.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 1100, y: 700)))
+        pressReturn()
+        guard recorded == CGRect(x: 1000, y: 600, width: 100, height: 100) else {
+            throw RecorderError.message("Clicking outside a pre-selection must draw a new one, got \(String(describing: recorded))")
+        }
+        print("PASS: last-region pre-selection on a negative-origin display, toolbar label, Return, and drawing a new region")
     }
 }
