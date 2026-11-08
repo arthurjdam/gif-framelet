@@ -67,6 +67,8 @@ private struct RecorderMenu: View {
             Button("Cancel", systemImage: "xmark") { controller.stop() }
         case .stopping:
             Text("Finishing capture...")
+        case .previewing:
+            Button("Show Preview", systemImage: "play.rectangle") { controller.trigger() }
         case .exporting:
             Button("Cancel Export", systemImage: "xmark") { controller.cancelExport() }
         }

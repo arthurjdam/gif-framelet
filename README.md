@@ -40,8 +40,15 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
    The overlay becomes click-through so you can interact with the recorded app.
 5. Press the same global shortcut again, choose **Stop Recording** in Framelet's menu,
   or use macOS's native recording stop button. All three finalize the movie and
-  export a GIF. The Framelet menu-bar icon shows elapsed recording time.
-6. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
+  open the preview. The Framelet menu-bar icon shows elapsed recording time.
+6. The preview plays the take in a loop. Drag the **Start** and **End** sliders (or
+  use the arrow keys) to trim off the first and last moments; the window shows the
+  trimmed duration, frame count, and GIF size in pixels. **Space** plays or pauses.
+  Press **Return** or click **Export GIF** to encode the selected range. **Discard...**
+  deletes the take after confirming. **Keep for Later**, **Escape**, or closing the
+  window keeps the take for retry from the menu bar. Turn off **Preview before
+  export** in Settings to export immediately after stopping.
+7. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
 
 The region belongs to one display; it cannot span displays. Capture excludes
 Framelet's own windows, including the selection overlay. A changed display layout
@@ -54,7 +61,7 @@ blank because of macOS or the source application's capture restrictions.
   after 15/30/60/120 seconds, and a recordable global shortcut. Shortcut conflicts
   are reported; at least Command, Control, or Option is required.
 - **GIF:** 5-30 fps, maximum width of 320-2560 pixels, quality of 20-100, faster
-  encoding, and infinite looping or single playback. Retina scaling is respected;
+  encoding, infinite looping or single playback, and preview before export (on by default). Retina scaling is respected;
   the capture stage does not upscale small selections.
 - **Files:** destination folder, reveal-in-Finder preference, export progress,
   cancellation, and retry of a failed export.
@@ -75,7 +82,8 @@ export retains the original movie for retry, including after a normal app restar
 A `recovery.json` sidecar written next to the movie when capture starts records the
 capture frame rate, so a retry after relaunch uses the fps the movie was recorded
 at (older recoveries without it use the current setting). The recovery menu can
-reveal or explicitly discard it. Framelet keeps one recovery: a pending recovery
+reveal or explicitly discard it. The trim chosen in the preview is not saved with
+the recovery: **Retry GIF Export** exports the whole take. Framelet keeps one recovery: a pending recovery
 does not block recording, but Framelet first asks whether to replace it (or reveal
 it so you can copy it elsewhere). The previous recording is deleted only once the
 new one has been captured as a playable movie, so cancelling the selection or a

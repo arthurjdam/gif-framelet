@@ -25,8 +25,9 @@ enum GIFExporter {
         return duration.seconds.isFinite && duration.seconds > 0
     }
 
+    /// Exports `range` of the movie (the whole movie when nil); frame count and GIF timing are relative to the range start.
     static func export(
-        movie: URL, directory: URL, encoder: URL, options: ExportOptions,
+        movie: URL, directory: URL, encoder: URL, options: ExportOptions, range: CMTimeRange? = nil,
         progress: @escaping @Sendable (Double, ExportStage) async -> Void
     ) async throws -> URL {
         let fileManager = FileManager.default
@@ -34,7 +35,9 @@ enum GIFExporter {
         try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: workspace) }
         let asset = AVURLAsset(url: movie)
-        let duration = try await asset.load(.duration).seconds
+        let full = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
+        let span = range.map { $0.intersection(full) } ?? full
+        let start = span.start.seconds, duration = span.duration.seconds
         let count = options.frameCount(duration: duration)
         guard count > 0 else { throw RecorderError.message("The recording contains no frames. Record for a little longer and try again.") }
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -44,6 +47,7 @@ enum GIFExporter {
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         output.alwaysCopiesSampleData = false
         reader.add(output)
+        if range != nil { reader.timeRange = span }
         guard reader.startReading() else { throw reader.error ?? RecorderError.message("The recording could not be read.") }
         defer { reader.cancelReading() }
         func nextFrame() throws -> (time: Double, image: CGImage)? {
@@ -63,7 +67,7 @@ enum GIFExporter {
         var frames: [String] = []
         for index in 0..<count {
             try Task.checkCancellation()
-            let seconds = min(Double(index) / Double(options.fps), max(0, duration - 1.0 / Double(options.fps)))
+            let seconds = start + min(Double(index) / Double(options.fps), max(0, duration - 1.0 / Double(options.fps)))
             while let candidate = upcoming, current == nil || candidate.time <= seconds + 0.0005 {
                 current = candidate.image
                 upcoming = try nextFrame()

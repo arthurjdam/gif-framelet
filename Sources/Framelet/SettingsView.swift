@@ -60,6 +60,8 @@ struct SettingsView: View {
                         Toggle("Faster encoding", isOn: $settings.fast)
                             .help("Uses less encoding effort; files may be larger and slightly lower quality.")
                         Toggle("Loop forever", isOn: $settings.loops)
+                        Toggle("Preview before export", isOn: $settings.previewBeforeExport)
+                            .help("After recording, play the take and trim its start and end before encoding.")
                     }.disabled(controller.isBusy)
                     Section("Encoder") {
                         LabeledContent("gifski", value: GIFExporter.bundledEncoder == nil ? "Not bundled" : GIFExporter.encoderVersion ?? "Unknown")

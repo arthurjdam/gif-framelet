@@ -34,6 +34,21 @@ enum SelfChecks {
         try inspectGIF(third, loops: false)
         print("PASS: single-play GIF and fast encoding")
 
+        let range = CMTimeRange(start: CMTime(value: 1, timescale: 2), end: CMTime(value: 3, timescale: 2))
+        let trimmed = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options, range: range) { _, _ in }
+        try inspectGIF(trimmed, loops: true, frames: 9...11, seconds: 1)
+        guard let source = CGImageSourceCreateWithURL(trimmed as CFURL, nil),
+              let firstFrame = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let lastFrame = CGImageSourceCreateImageAtIndex(source, CGImageSourceGetCount(source) - 1, nil) else {
+            throw RecorderError.message("Trimmed GIF cannot be decoded")
+        }
+        let untrimmed = CGImageSourceCreateWithURL(first as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        try require(untrimmed.map { isRed($0, x: 34, y: 96) && !isRed($0, x: 75, y: 96) } == true, "Untrimmed GIF must start at fixture frame 0")
+        // Fixture frame n draws a 44 px circle at x = 12 + 12n; these pixel pairs are both red only for frames 5 and 14.
+        try require(isRed(firstFrame, x: 75, y: 96) && isRed(firstFrame, x: 110, y: 96), "Trimmed GIF must start at fixture frame 5 (0.5 s)")
+        try require(isRed(lastFrame, x: 183, y: 96) && isRed(lastFrame, x: 221, y: 96), "Trimmed GIF must end at fixture frame 14 (1.4 s)")
+        print("PASS: trimmed export of 0.5-1.5 s contains only that range (\(CGImageSourceGetCount(source)) frames, ~1 s)")
+
         let cancelled = Task {
             try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { _, _ in }
         }
@@ -147,7 +162,7 @@ enum SelfChecks {
         try RegionSelector.checkInteractions(snapshots: snapshots)
     }
 
-    private static func inspectGIF(_ url: URL, loops: Bool) throws {
+    private static func inspectGIF(_ url: URL, loops: Bool, frames: ClosedRange<Int> = 18...21, seconds: Double = 2) throws {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
               let properties = CGImageSourceCopyProperties(source, nil) as? [String: Any] else {
@@ -155,7 +170,7 @@ enum SelfChecks {
         }
         try require(image.width == 320 && image.height == 180, "GIF has unexpected dimensions")
         let count = CGImageSourceGetCount(source)
-        try require(count >= 18 && count <= 21, "GIF must contain the animation's frames; got \(count)")
+        try require(frames.contains(count), "GIF must contain the animation's frames; got \(count)")
         let gif = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any]
         let repeatCount = gif?[kCGImagePropertyGIFLoopCount as String] as? Int
         try require(loops ? repeatCount == 0 : repeatCount != 0, "GIF loop metadata is incorrect")
@@ -166,7 +181,15 @@ enum SelfChecks {
             duration += frameGIF?[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double
                 ?? frameGIF?[kCGImagePropertyGIFDelayTime as String] as? Double ?? 0
         }
-        try require(abs(duration - 2) <= 0.15, "GIF duration is \(duration), expected 2 seconds")
+        try require(abs(duration - seconds) <= 0.15, "GIF duration is \(duration), expected \(seconds) seconds")
+    }
+
+    private static func isRed(_ image: CGImage, x: Int, y: Int) -> Bool {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        return pixel[0] > 180 && pixel[1] < 100 && pixel[2] < 100
     }
 
     private static func makeMovie(at url: URL, frames: Int = 20, fps: Int = 10) async throws {
