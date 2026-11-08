@@ -17,6 +17,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var outputDirectory: URL
     @Published private(set) var outputStatus = FolderStatus.ok
     @Published private(set) var shortcut: Shortcut
+    var lastRegion: LastRegion? { didSet { defaults.set(try? JSONEncoder().encode(lastRegion), forKey: "lastRegion") } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -45,6 +46,7 @@ final class AppSettings: ObservableObject {
             outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
         }
         shortcut = defaults.data(forKey: "shortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultShortcut
+        lastRegion = defaults.data(forKey: "lastRegion").flatMap { try? JSONDecoder().decode(LastRegion.self, from: $0) }
         if stale { try? setDirectory(outputDirectory) }
         refreshOutputStatus()
     }

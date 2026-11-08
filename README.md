@@ -43,6 +43,13 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
   export a GIF. The Framelet menu-bar icon shows elapsed recording time.
 6. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
 
+For a second take of the same area, choose **Record Last Region** in the menu bar: it
+skips drawing and starts recording the region from the last recording that started.
+When the selector opens, that region is also pre-selected on its display, toolbar
+included, so **Space** or **Return** records it right away; clicking outside it draws a
+new one. The last region is kept across launches, and it is ignored (and the menu item
+disabled) when its display is disconnected or has changed size, position, or resolution.
+
 The region belongs to one display; it cannot span displays. Capture excludes
 Framelet's own windows, including the selection overlay. A changed display layout
 or sleep ends an active recording. No audio is recorded. Protected content may be

@@ -74,19 +74,46 @@ final class AppController: ObservableObject {
         case .starting, .recording: stop()
         case .selecting: cancelSelection()
         case .idle, .failed:
-            guard ensurePermission() else { showSettings(); return }
-            guard GIFExporter.bundledEncoder != nil else {
-                fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
-                showSettings()
-                return
-            }
-            guard recoveryMovie == nil || confirmReplacingRecovery() else { return }
-            errorMessage = nil
+            guard prepareToRecord() else { return }
             phase = .selecting
             settingsWindow?.orderOut(nil)
-            selector.show(maximumWidth: settings.maximumWidth)
+            selector.show(maximumWidth: settings.maximumWidth, preselect: lastRegion?.region)
         case .stopping, .exporting: break
         }
+    }
+
+    /// Records the stored region again without drawing, through the same checks and start path as trigger().
+    func recordLastRegion() {
+        guard !editingShortcut, phase == .idle || phase == .failed, lastRegion != nil, prepareToRecord() else { return }
+        guard let last = lastRegion else { // The display may have changed while the replace-recovery prompt was open.
+            errorMessage = "The last region's display is no longer connected or has changed. Choose Record Region instead."
+            return
+        }
+        phase = .selecting
+        settingsWindow?.orderOut(nil)
+        selector.show(region: last.region, on: last.screen)
+        start(region: last.region, screen: last.screen)
+    }
+
+    /// The stored last region and its screen, or nil when that display is gone, has changed geometry, or the rect no longer fits.
+    var lastRegion: (region: CaptureRegion, screen: NSScreen)? {
+        guard let saved = settings.lastRegion,
+              let screen = NSScreen.screens.first(where: { $0.displayID == saved.displayID }),
+              let region = saved.region(displays: [saved.displayID: screen.frame]) else { return nil }
+        return (region, screen)
+    }
+
+    /// Checks shared by every way of starting a recording: permission, the bundled encoder, and the replace-recovery prompt.
+    private func prepareToRecord() -> Bool {
+        guard ensurePermission() else { showSettings(); return false }
+        guard GIFExporter.bundledEncoder != nil else {
+            fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
+            showSettings()
+            return false
+        }
+        guard recoveryMovie == nil || confirmReplacingRecovery() else { return false }
+        errorMessage = nil
+        return true
     }
 
     /// Framelet keeps one recovery. Asked before the selector opens; the previous take is only deleted once a new movie exists.
@@ -147,6 +174,7 @@ final class AppController: ObservableObject {
                     return
                 }
                 phase = .recording
+                if let id = screen.displayID { settings.lastRegion = LastRegion(region: region, displayID: id) }
                 elapsed = 0
                 startedAt = Date()
                 let limit = settings.maximumDuration
@@ -324,6 +352,7 @@ final class AppController: ObservableObject {
     }
 
     private func interruptCapture() {
+        objectWillChange.send() // Display changes can enable or disable Record Last Region.
         if phase == .selecting { cancelSelection() }
         if phase == .recording || phase == .starting { stop() }
     }
@@ -401,4 +430,8 @@ final class AppController: ObservableObject {
         stop()
         return cancellingStart || !isBusy
     }
+}
+
+extension NSScreen {
+    var displayID: CGDirectDisplayID? { deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID }
 }
