@@ -142,6 +142,12 @@ enum SelfChecks {
         try require(gone.outputProblem?.contains(gone.outputDirectory.path(percentEncoded: false)) == true, "The problem must name the folder")
         print("PASS: output folder validation, stale bookmark refresh, missing folder reported")
 
+        let credits = AboutPanel.credits
+        try require(AboutPanel.version != nil && credits.string.contains("gifski \(GIFExporter.encoderVersion ?? "?")"), "About must show the version and gifski credit")
+        try require(AboutPanel.noticeURL != nil && credits.string.contains("Third-party notices"), "About must link the bundled NOTICE")
+        try require(LoginItem.isAvailable, "Login item must be available from the app bundle") // Never registers here.
+        print("PASS: About version, gifski credit, NOTICE link; login item available")
+
         let snapshots = ProcessInfo.processInfo.environment["FRAMELET_TEST_ARTIFACTS"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? directory
         try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
         try RegionSelector.checkInteractions(snapshots: snapshots)

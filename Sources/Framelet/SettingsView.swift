@@ -101,6 +101,7 @@ struct SettingsView: View {
                 }.formStyle(.grouped)
                 .onAppear { settings.refreshOutputStatus() }
             }
+            Tab("General", systemImage: "gearshape") { GeneralSettings() }
         }
         .padding(12)
         .frame(width: 520, height: 540)
