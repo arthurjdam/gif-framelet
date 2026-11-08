@@ -108,7 +108,7 @@ final class AppController: ObservableObject {
     func cancelSelection() {
         guard phase == .selecting else { return }
         selector.close()
-        phase = .idle
+        phase = restingPhase
     }
 
     private func start(region: CaptureRegion, screen: NSScreen) {
@@ -120,12 +120,16 @@ final class AppController: ObservableObject {
         recorder.onStopRequested = { [weak self] in self?.stop() }
         recorder.onUnexpectedStop = { [weak self, weak recorder] error in
             guard let self, let recorder, self.recorder === recorder, self.phase == .recording || self.phase == .starting else { return }
+            let wasStarting = self.phase == .starting
             self.timer?.invalidate()
             self.selector.close()
             self.phase = .stopping
             Task {
                 _ = try? await recorder.stop()
-                self.preserveMovieIfPresent(recorder.movieURL)
+                if let movie = recorder.movieURL {
+                    // begin() may still delete a take that failed while starting, so never keep it for retry.
+                    if wasStarting { Self.removeTake(movie) } else { _ = await self.keepForRetry(movie) }
+                }
                 self.recorder = nil
                 self.fail(error.localizedDescription)
             }
@@ -152,7 +156,7 @@ final class AppController: ObservableObject {
             } catch is CancellationError {
                 self.recorder = nil
                 cancellingStart = false
-                if phase == .stopping { phase = .idle }
+                if phase == .stopping { phase = restingPhase }
             } catch {
                 selector.close()
                 self.recorder = nil
@@ -178,26 +182,41 @@ final class AppController: ObservableObject {
             do {
                 let movie = try await recorder.stop()
                 self.recorder = nil
+                guard await keepForRetry(movie) else {
+                    fail("The recording contains no usable video." + (recoveryMovie == nil ? " Record for a little longer and try again." : " The previous recording is still available for retry."))
+                    return
+                }
                 export(movie)
             } catch {
-                preserveMovieIfPresent(recorder.movieURL)
+                if let movie = recorder.movieURL { _ = await keepForRetry(movie) }
                 self.recorder = nil
                 fail(error.localizedDescription)
             }
         }
     }
 
-    private func preserveMovieIfPresent(_ url: URL?) {
-        guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
-        keepForRetry(url)
-    }
+    private var restingPhase: Phase { recoveryMovie == nil ? .idle : .failed }
 
-    /// The new take becomes the single recovery; the user agreed to replace any previous one in trigger().
-    private func keepForRetry(_ movie: URL) {
-        guard movie != recoveryMovie else { return }
-        removeRecovery()
+    /// Makes a new take the single recovery (the user agreed to replace any previous one in trigger()),
+    /// but only if it is usable; otherwise the new take is deleted and the previous recovery is kept.
+    private func keepForRetry(_ movie: URL) async -> Bool {
+        guard movie != recoveryMovie else { return true }
+        guard await Self.recovery(replacing: recoveryMovie, with: movie) == movie else { return false }
         recoveryMovie = movie
         UserDefaults.standard.set(movie.path, forKey: "recoveryMovie")
+        return true
+    }
+
+    /// Returns the take to keep for retry: `new` if it is a usable movie (deleting `old`), else `old` (deleting `new`).
+    nonisolated static func recovery(replacing old: URL?, with new: URL) async -> URL? {
+        guard await GIFExporter.isUsableMovie(new) else { removeTake(new); return old }
+        if let old, old != new { removeTake(old) }
+        return new
+    }
+
+    nonisolated static func removeTake(_ movie: URL) {
+        let directory = movie.deletingLastPathComponent()
+        if directory.lastPathComponent.hasPrefix("Framelet-") { try? FileManager.default.removeItem(at: directory) }
     }
 
     func retryExport() {
@@ -206,7 +225,6 @@ final class AppController: ObservableObject {
     }
 
     private func export(_ movie: URL) {
-        keepForRetry(movie)
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
         settings.refreshOutputStatus()
         if let problem = settings.outputProblem {
@@ -292,10 +310,7 @@ final class AppController: ObservableObject {
     }
 
     private func removeRecovery() {
-        if let recoveryMovie {
-            let directory = recoveryMovie.deletingLastPathComponent()
-            if directory.lastPathComponent.hasPrefix("Framelet-") { try? FileManager.default.removeItem(at: directory) }
-        }
+        if let recoveryMovie { Self.removeTake(recoveryMovie) }
         recoveryMovie = nil
         UserDefaults.standard.removeObject(forKey: "recoveryMovie")
     }

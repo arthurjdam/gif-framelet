@@ -78,7 +78,8 @@ at (older recoveries without it use the current setting). The recovery menu can
 reveal or explicitly discard it. Framelet keeps one recovery: a pending recovery
 does not block recording, but Framelet first asks whether to replace it (or reveal
 it so you can copy it elsewhere). The previous recording is deleted only once the
-new one has been captured, so cancelling the selection keeps it. The original is
+new one has been captured as a playable movie, so cancelling the selection or a
+failed capture keeps it. The original is
 deleted after successful export. Recovery lives in macOS temporary storage, so it is not a
 long-term backup. Interrupted capture may produce an incomplete movie. Large or
 long captures can need substantial temporary disk space.
