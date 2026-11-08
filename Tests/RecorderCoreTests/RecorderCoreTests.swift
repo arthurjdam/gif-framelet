@@ -1,6 +1,8 @@
 import Foundation
 import CoreGraphics
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 import RecorderCore
 
 private let laptop = CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -75,4 +77,29 @@ private func region(_ rect: CGRect, in bounds: CGRect) throws -> CaptureRegion {
     #expect(RecoveryInfo.read(besides: movie) == RecoveryInfo(fps: 25))
     try Data("not json".utf8).write(to: RecoveryInfo.url(besides: movie))
     #expect(RecoveryInfo.read(besides: movie) == nil)
+}
+
+@Test func gifSummaryText() {
+    let english = Locale(identifier: "en_US")
+    #expect(GIFSummary(bytes: 1_800_000, width: 320, height: 180, duration: 4.2).text(locale: english) == "1.8 MB, 320\u{00D7}180, 4.2 s")
+    #expect(GIFSummary(bytes: 532_000, width: 1280, height: 720, duration: 0.95).text(locale: english) == "532 kB, 1280\u{00D7}720, 1.0 s")
+    #expect(GIFSummary(bytes: 1_800_000, width: 2, height: 2, duration: 4.26).text(locale: Locale(identifier: "de_DE")) == "1,8 MB, 2\u{00D7}2, 4,3 s")
+}
+
+@Test func gifSummaryReadsFile() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("Framelet-test-\(UUID().uuidString).gif")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, 3, nil))
+    let context = try #require(CGContext(data: nil, width: 40, height: 30, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+    let image = try #require(context.makeImage())
+    for _ in 0..<3 {
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.5]] as CFDictionary)
+    }
+    #expect(CGImageDestinationFinalize(destination))
+    let summary = try #require(GIFSummary(contentsOf: url))
+    #expect(summary.width == 40 && summary.height == 30)
+    #expect(abs(summary.duration - 1.5) < 0.01)
+    #expect(summary.bytes == (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize))
+    #expect(GIFSummary(contentsOf: url.deletingPathExtension()) == nil)
 }

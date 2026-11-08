@@ -80,13 +80,10 @@ private struct RecorderMenu: View {
         }
         if let lastExport = controller.lastExport {
             Divider()
-            Button("Show Last GIF in Finder", systemImage: "doc.richtext") {
+            Button("Show Last GIF in Finder" + (controller.lastExportSize.map { " (\($0))" } ?? ""), systemImage: "doc.richtext") {
                 NSWorkspace.shared.activateFileViewerSelecting([lastExport])
             }
-            Button("Copy GIF", systemImage: "doc.on.doc") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([lastExport as NSURL])
-            }
+            Button("Copy GIF", systemImage: "doc.on.doc") { AppController.copy(lastExport) }
         }
         Divider()
         Button("Open Output Folder", systemImage: "folder") { NSWorkspace.shared.open(controller.settings.outputDirectory) }

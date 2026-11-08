@@ -149,24 +149,18 @@ enum SelfChecks {
 
     private static func inspectGIF(_ url: URL, loops: Bool) throws {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              let properties = CGImageSourceCopyProperties(source, nil) as? [String: Any] else {
+              let properties = CGImageSourceCopyProperties(source, nil) as? [String: Any],
+              let summary = GIFSummary(contentsOf: url) else {
             throw RecorderError.message("GIF cannot be decoded")
         }
-        try require(image.width == 320 && image.height == 180, "GIF has unexpected dimensions")
+        try require(summary.width == 320 && summary.height == 180, "GIF has unexpected dimensions")
         let count = CGImageSourceGetCount(source)
         try require(count >= 18 && count <= 21, "GIF must contain the animation's frames; got \(count)")
         let gif = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any]
         let repeatCount = gif?[kCGImagePropertyGIFLoopCount as String] as? Int
         try require(loops ? repeatCount == 0 : repeatCount != 0, "GIF loop metadata is incorrect")
-        var duration = 0.0
-        for index in 0..<count {
-            let frameProperties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any]
-            let frameGIF = frameProperties?[kCGImagePropertyGIFDictionary as String] as? [String: Any]
-            duration += frameGIF?[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double
-                ?? frameGIF?[kCGImagePropertyGIFDelayTime as String] as? Double ?? 0
-        }
-        try require(abs(duration - 2) <= 0.15, "GIF duration is \(duration), expected 2 seconds")
+        try require(abs(summary.duration - 2) <= 0.15, "GIF duration is \(summary.duration), expected 2 seconds")
+        try require(summary.bytes > 0 && summary.text().contains("320\u{00D7}180"), "GIF summary is incomplete: \(summary.text())")
     }
 
     private static func makeMovie(at url: URL, frames: Int = 20, fps: Int = 10) async throws {
