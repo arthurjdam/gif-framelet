@@ -63,8 +63,10 @@ private struct RecorderMenu: View {
             Button("Cancel Selection", systemImage: "xmark") { controller.cancelSelection() }
         case .recording:
             Button("Stop Recording  \(controller.settings.shortcut.display)", systemImage: "stop.fill") { controller.stop() }
-        case .starting, .stopping:
-            Text(controller.phase == .starting ? "Starting capture..." : "Finishing capture...")
+        case .starting:
+            Button("Cancel", systemImage: "xmark") { controller.stop() }
+        case .stopping:
+            Text("Finishing capture...")
         case .exporting:
             Button("Cancel Export", systemImage: "xmark") { controller.cancelExport() }
         }

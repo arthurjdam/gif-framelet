@@ -13,6 +13,7 @@ final class AppController: ObservableObject {
     private var timer: Timer?
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
+    private var cancellingStart = false
     @Published private(set) var phase = Phase.idle
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
@@ -150,6 +151,7 @@ final class AppController: ObservableObject {
                 self.timer = timer
             } catch is CancellationError {
                 self.recorder = nil
+                cancellingStart = false
                 if phase == .stopping { phase = .idle }
             } catch {
                 selector.close()
@@ -163,6 +165,7 @@ final class AppController: ObservableObject {
         guard phase == .recording || phase == .starting, let recorder else { return }
         if phase == .starting {
             phase = .stopping
+            cancellingStart = true
             selector.close()
             recorder.cancel()
             return
@@ -358,14 +361,16 @@ final class AppController: ObservableObject {
 
     func canQuit() -> Bool {
         if phase == .selecting { cancelSelection() }
-        guard [.starting, .recording, .stopping, .exporting].contains(phase) else { return true }
+        guard [.starting, .recording, .stopping, .exporting].contains(phase), !(phase == .stopping && cancellingStart) else { return true }
         let alert = NSAlert()
         alert.messageText = phase == .exporting ? "A GIF is still being exported" : "A recording is in progress"
         alert.informativeText = phase == .recording ? "Stop the recording before quitting Framelet." : "Wait for the current operation to finish, or cancel the export from the menu bar."
         alert.addButton(withTitle: "Keep Framelet Open")
         if phase == .recording { alert.addButton(withTitle: "Stop Recording") }
+        if phase == .starting { alert.addButton(withTitle: "Cancel and Quit") }
         NSApp.activate()
-        if alert.runModal() == .alertSecondButtonReturn { stop() }
-        return false
+        guard alert.runModal() == .alertSecondButtonReturn else { return false }
+        stop()
+        return cancellingStart || !isBusy
     }
 }
