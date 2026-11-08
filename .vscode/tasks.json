@@ -14,7 +14,7 @@
             "label": "Check core behavior",
             "type": "process",
             "command": "swift",
-            "args": ["run", "FrameletChecks"],
+            "args": ["test"],
             "options": { "cwd": "${workspaceFolder}" },
             "group": "test",
             "problemMatcher": []

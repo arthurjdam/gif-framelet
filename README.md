@@ -77,7 +77,7 @@ long captures can need substantial temporary disk space.
 ## Verification
 
 ```sh
-swift run FrameletChecks
+swift test
 zsh scripts/build-app.sh
 dist/Framelet.app/Contents/MacOS/Framelet --self-test
 ```
@@ -108,5 +108,5 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 - [Sources/Framelet](Sources/Framelet): app lifecycle, menu bar, settings, shortcut,
   selection panels, ScreenCaptureKit recorder, exporter, and native self-checks.
 - [Sources/RecorderCore](Sources/RecorderCore): capture geometry and export options.
-- [Tests/RecorderCoreTests](Tests/RecorderCoreTests): standalone core checks.
+- [Tests/RecorderCoreTests](Tests/RecorderCoreTests): Swift Testing unit tests for the core (`swift test`).
 - [scripts/build-app.sh](scripts/build-app.sh): reproducible app bundle build.
