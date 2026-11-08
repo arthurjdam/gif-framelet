@@ -129,7 +129,7 @@ final class ScreenRecorder: NSObject, SCRecordingOutputDelegate, SCStreamDelegat
     }
 
     private func failed(_ error: any Error) {
-        guard !failureReported else { return }
+        guard !failureReported, !cancelRequested else { return }
         failureReported = true
         recordingError = error
         completion?.resume(throwing: error)
@@ -192,6 +192,7 @@ extension ScreenRecorder {
             recorder.movieURL = directory.appendingPathComponent("capture.mp4")
             var started = false, stopped = false, notified = false
             recorder.onStopRequested = { notified = true }
+            recorder.onUnexpectedStop = { _ in notified = true }
             if cancelEarly { recorder.cancel() }
             do {
                 try await recorder.begin(directory: directory) {
@@ -202,6 +203,7 @@ extension ScreenRecorder {
                 throw RecorderError.message("Start must fail with CancellationError after a stop request")
             } catch is CancellationError {}
             recorder.finishedRecording()
+            recorder.streamStopped(with: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
             guard started != cancelEarly, stopped == started, !notified,
                   !FileManager.default.fileExists(atPath: directory.path) else {
                 throw RecorderError.message("Stop requested before start completes must stop any started capture, remove its directory, and stay silent")

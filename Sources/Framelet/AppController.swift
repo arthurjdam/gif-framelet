@@ -104,7 +104,7 @@ final class AppController: ObservableObject {
         self.recorder = recorder
         recorder.onStopRequested = { [weak self] in self?.stop() }
         recorder.onUnexpectedStop = { [weak self, weak recorder] error in
-            guard let self, let recorder, self.phase == .recording || self.phase == .starting else { return }
+            guard let self, let recorder, self.recorder === recorder, self.phase == .recording || self.phase == .starting else { return }
             self.timer?.invalidate()
             self.selector.close()
             self.phase = .stopping
