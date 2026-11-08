@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
+            Tab("General", systemImage: "gearshape") { GeneralSettings() }
             Tab("Recording", systemImage: "viewfinder") {
                 Form {
                     Section("Screen Recording") {

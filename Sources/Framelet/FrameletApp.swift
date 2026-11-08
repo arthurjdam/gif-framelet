@@ -93,6 +93,7 @@ private struct RecorderMenu: View {
         Button("Settings...", systemImage: "gearshape") { controller.showSettings() }
             .keyboardShortcut(",")
         Divider()
+        Button("About Framelet") { AboutPanel.show() }
         Button("Quit Framelet") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
