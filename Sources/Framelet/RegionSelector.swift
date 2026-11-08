@@ -66,7 +66,11 @@ final class RegionSelector {
             }
         }
         previousApp?.activate()
+        previousApp = nil // Called again when a countdown ends; don't pull focus back from an app the user switched to.
     }
+
+    /// Shows a large number in the locked selection (after `setRecording`); nil hides it.
+    func setCountdown(_ value: Int?) { selectedPanel?.selectionView.setCountdown(value) }
 
     func close() {
         for panel in panels {
@@ -125,6 +129,7 @@ private final class SelectionView: NSView {
     private var phase: CGFloat = 0
     private var timer: Timer?
     private var recording = false
+    private var countdown: Int?
     private var dimOutside = true
     private let toolbar = NSVisualEffectView()
     let dimensions = NSTextField(labelWithString: "")
@@ -191,11 +196,14 @@ private final class SelectionView: NSView {
 
     func setRecording(dimOutside: Bool) {
         recording = true
+        countdown = nil
         self.dimOutside = dimOutside
         stopAnimation()
         toolbar.isHidden = true
         needsDisplay = true
     }
+
+    func setCountdown(_ value: Int?) { countdown = value; needsDisplay = true }
 
     override func resetCursorRects() {
         guard !recording else { return }
@@ -227,7 +235,7 @@ private final class SelectionView: NSView {
         guard !selection.isEmpty else { return }
         let border = NSBezierPath(rect: selection.insetBy(dx: -1, dy: -1))
         border.lineWidth = 2
-        if recording {
+        if recording && countdown == nil {
             NSColor.systemRed.setStroke()
             border.stroke()
             return
@@ -237,6 +245,16 @@ private final class SelectionView: NSView {
         NSColor.black.withAlphaComponent(0.85).setStroke()
         border.setLineDash([6, 6], count: 2, phase: phase)
         border.stroke()
+        if let countdown {
+            let number = NSAttributedString(string: "\(countdown)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: min(selection.width, selection.height, 300) * 0.6, weight: .bold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.75),
+                .strokeColor: NSColor.black.withAlphaComponent(0.45), .strokeWidth: -3
+            ])
+            let size = number.size()
+            number.draw(at: CGPoint(x: selection.midX - size.width / 2, y: selection.midY - size.height / 2))
+            return
+        }
         for point in handles {
             let handle = NSBezierPath(roundedRect: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8), xRadius: 2, yRadius: 2)
             NSColor.white.setFill()
@@ -429,13 +447,22 @@ extension RegionSelector {
                 throw RecorderError.message("Could not create overlay snapshot")
             }
             view.cacheDisplay(in: view.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+            let counting = name == "countdown.png" // The number covers the centre, so probe inside the selection's corner.
             let outsideAlpha = bitmap.colorAt(x: 20, y: 20)?.alphaComponent ?? 1
-            let insideAlpha = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.alphaComponent ?? 1
+            let insideAlpha = (counting ? bitmap.colorAt(x: Int(150 * scale), y: Int((600 - 115) * scale))
+                               : bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2))?.alphaComponent ?? 1
             guard insideAlpha < 0.01, outsideAlpha > 0.01, outsideAlpha < 0.3 else {
                 throw RecorderError.message("The overlay must be transparent inside the selection and subtly dimmed outside")
             }
+            let number = stride(from: 305, to: 385, by: 2).flatMap { x in stride(from: 200, to: 280, by: 2).compactMap { y in
+                bitmap.colorAt(x: Int(CGFloat(x) * scale), y: Int((600 - CGFloat(y)) * scale))?.alphaComponent
+            } }.filter { $0 > 0.3 }
+            guard counting ? number.count > 100 && number.allSatisfy({ $0 < 0.9 }) : number.isEmpty else {
+                throw RecorderError.message(counting ? "The countdown must show a large translucent number in the selection centre"
+                                                     : "Only the countdown overlay may draw in the selection centre")
+            }
             if name == "recording.png" {
-                let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
                 for vertical in 160..<300 {
                     guard let color = bitmap.colorAt(x: Int(139 * scale), y: Int((600 - CGFloat(vertical)) * scale))?.usingColorSpace(.deviceRGB),
                           color.alphaComponent > 0.8,
@@ -453,12 +480,18 @@ extension RegionSelector {
 
         try snapshot("selection.png")
         recorded = nil
+        cancelled = false
+        view.setRecording(dimOutside: true)
+        view.setCountdown(3)
+        key(kVK_LeftArrow, .shift, times: 5); key(kVK_Space); key(kVK_Escape)
+        guard recorded == nil, !cancelled else { throw RecorderError.message("Countdown overlay must ignore selection keys") }
+        try snapshot("countdown.png")
         view.setRecording(dimOutside: true)
         key(kVK_LeftArrow, .shift, times: 5); key(kVK_UpArrow, .option)
         key(kVK_Space)
         guard recorded == nil else { throw RecorderError.message("Recording overlay must not restart capture") }
         try snapshot("recording.png")
-        print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, overlay alpha pixels, and solid recording border")
+        print("PASS: draw, move, resize, keyboard nudge/resize with clamping, pt/px label, Space, Return, Escape, locked selection, countdown number, overlay alpha pixels, and solid recording border")
     }
 
     static func checkPreselection() throws {

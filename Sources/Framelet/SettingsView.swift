@@ -28,6 +28,11 @@ struct SettingsView: View {
                             Text("1 minute").tag(60)
                             Text("2 minutes").tag(120)
                         }
+                        Picker("Countdown", selection: $settings.countdown) {
+                            Text("Off").tag(0)
+                            Text("3 seconds").tag(3)
+                            Text("5 seconds").tag(5)
+                        }
                     }.disabled(controller.isBusy)
                     Section("Keyboard Shortcut") {
                         LabeledContent("Select region / stop recording") {

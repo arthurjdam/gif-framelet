@@ -38,6 +38,11 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
 3. Press **Space** or **Return**, or click **Record**. **Escape** cancels selection.
 4. The border becomes solid red, controls disappear, and the surrounding screen dims subtly.
    The overlay becomes click-through so you can interact with the recorded app.
+   With **Countdown** set to 3 or 5 seconds, a large number counts down inside the
+   selection first. The overlay is already click-through and the previous app is
+   reactivated, so you can set up the shot; the global shortcut or **Cancel Countdown**
+   in the menu bar cancels it, and the menu-bar icon shows the remaining seconds.
+   Capture starts at 0 and, like the rest of the overlay, the number is never recorded.
 5. Press the same global shortcut again, choose **Stop Recording** in Framelet's menu,
   or use macOS's native recording stop button. All three finalize the movie and
   export a GIF. The Framelet menu-bar icon shows elapsed recording time.
@@ -58,7 +63,8 @@ blank because of macOS or the source application's capture restrictions.
 ## Settings
 
 - **Recording:** screen permission, pointer capture, outside dimming, automatic stop
-  after 15/30/60/120 seconds, and a recordable global shortcut. Shortcut conflicts
+  after 15/30/60/120 seconds, an optional 3- or 5-second countdown before capture
+  starts, and a recordable global shortcut. Shortcut conflicts
   are reported; at least Command, Control, or Option is required.
 - **GIF:** 5-30 fps, maximum width of 320-2560 pixels, quality of 20-100, faster
   encoding, and infinite looping or single playback. Retina scaling is respected;
@@ -67,7 +73,7 @@ blank because of macOS or the source application's capture restrictions.
   cancellation, and retry of a failed export.
 
 Defaults: 15 fps, 1280-pixel maximum width, quality 80, infinite loop, pointer on,
-outside dimming on, and a 60-second recording limit. Lower frame rates, widths, and
+outside dimming on, a 60-second recording limit, and no countdown. Lower frame rates, widths, and
 quality generally produce smaller files. Fast encoding trades compression and
 quality for speed; it is not a smaller-file preset.
 
@@ -99,7 +105,7 @@ zsh scripts/build-app.sh
 dist/Framelet.app/Contents/MacOS/Framelet --self-test
 ```
 
-To retain selection/recording PNG snapshots:
+To retain selection/countdown/recording PNG snapshots:
 
 ```sh
 FRAMELET_TEST_ARTIFACTS="$PWD/.build/validation" \
