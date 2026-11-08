@@ -4,15 +4,22 @@ import Carbon.HIToolbox
 @MainActor
 final class GlobalShortcut {
     private var hotKey: EventHotKeyRef?
+    private var discardHotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
+    static let stopID: UInt32 = 1, discardID: UInt32 = 2
     var onPress: (() -> Void)?
+    var onDiscard: (() -> Void)?
 
     init() {
         var event = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
             guard let context else { return OSStatus(eventNotHandledErr) }
+            var identifier = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &identifier)
             MainActor.assumeIsolated {
-                Unmanaged<GlobalShortcut>.fromOpaque(context).takeUnretainedValue().onPress?()
+                let shortcut = Unmanaged<GlobalShortcut>.fromOpaque(context).takeUnretainedValue()
+                (identifier.id == GlobalShortcut.discardID ? shortcut.onDiscard : shortcut.onPress)?()
             }
             return noErr
         }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &handler)
@@ -20,15 +27,44 @@ final class GlobalShortcut {
 
     func register(_ shortcut: Shortcut) throws {
         unregister()
-        let identifier = EventHotKeyID(signature: 0x46524D4C, id: 1)
+        hotKey = try Self.install(shortcut, id: Self.stopID)
+    }
+
+    /// The shortcut plus Option discards a recording; registered only while one is in progress, and not at all
+    /// when the shortcut already contains Option.
+    func registerDiscard(_ shortcut: Shortcut) throws {
+        unregisterDiscard()
+        guard let variant = shortcut.discardVariant else { return }
+        discardHotKey = try Self.install(variant, id: Self.discardID)
+    }
+
+    private static func install(_ shortcut: Shortcut, id: UInt32) throws -> EventHotKeyRef? {
+        var hotKey: EventHotKeyRef?
+        let identifier = EventHotKeyID(signature: 0x46524D4C, id: id)
         let result = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, identifier, GetApplicationEventTarget(), 0, &hotKey)
         guard result == noErr else {
             throw RecorderError.message("This shortcut is unavailable or used by another app. Choose a different combination. (\(result))")
         }
+        return hotKey
     }
 
     func unregister() {
         if let hotKey { UnregisterEventHotKey(hotKey) }
         hotKey = nil
+    }
+
+    func unregisterDiscard() {
+        if let discardHotKey { UnregisterEventHotKey(discardHotKey) }
+        discardHotKey = nil
+    }
+}
+
+extension Shortcut {
+    /// The shortcut plus Option, or nil if it already contains Option (the variant would be the shortcut itself).
+    var discardVariant: Shortcut? {
+        modifiers & UInt32(optionKey) != 0 ? nil : Shortcut(keyCode: keyCode, modifiers: modifiers | UInt32(optionKey), key: key)
+    }
+    var discardHint: String {
+        discardVariant == nil ? "Discard is available from the menu while recording" : "Add Option to this shortcut to discard a recording"
     }
 }

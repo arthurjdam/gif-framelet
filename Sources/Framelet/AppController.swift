@@ -15,7 +15,13 @@ final class AppController: ObservableObject {
     private var exportTask: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var cancellingStart = false
-    @Published private(set) var phase = Phase.idle
+    @Published private(set) var phase = Phase.idle {
+        didSet {
+            // The discard hot key exists only while recording; every exit from .recording goes through here.
+            guard (phase == .recording) != (oldValue == .recording) else { return }
+            if phase == .recording { try? shortcut.registerDiscard(settings.shortcut) } else { shortcut.unregisterDiscard() }
+        }
+    }
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var countdownRemaining = 0
@@ -43,6 +49,7 @@ final class AppController: ObservableObject {
 
     func launch() {
         shortcut.onPress = { [weak self] in self?.trigger() }
+        shortcut.onDiscard = { [weak self] in self?.discard() }
         selector.onCancel = { [weak self] in self?.cancelSelection() }
         selector.onRecord = { [weak self] region, screen in self?.start(region: region, screen: screen) }
         do { try shortcut.register(settings.shortcut) } catch { errorMessage = error.localizedDescription }
@@ -202,7 +209,10 @@ final class AppController: ObservableObject {
                 if let movie = recorder.movieURL { try? RecoveryInfo(fps: options.fps).write(besides: movie) }
                 guard phase == .starting, self.recorder === recorder else {
                     await recorder.discard()
-                    if self.recorder === recorder { self.recorder = nil }
+                    guard self.recorder === recorder else { return }
+                    self.recorder = nil
+                    cancellingStart = false
+                    if phase == .stopping { phase = restingPhase }
                     return
                 }
                 phase = .recording
@@ -261,6 +271,23 @@ final class AppController: ObservableObject {
                 self.recorder = nil
                 fail(error.localizedDescription)
             }
+        }
+    }
+
+    /// Stops capture and deletes the take without exporting or touching the recovery (no keepForRetry).
+    /// Before recording begins (.starting, and a countdown) it is stop()'s cancel path; stop() ignores other phases.
+    /// A system stop or the time limit can't export the take meanwhile: stop() requires .recording and the timer is gone.
+    func discard() {
+        guard phase == .recording, let recorder else { stop(); return }
+        phase = .stopping
+        timer?.invalidate()
+        timer = nil
+        selector.close()
+        Task {
+            _ = try? await recorder.stop()
+            if let movie = recorder.movieURL { Self.removeTake(movie) }
+            self.recorder = nil
+            phase = restingPhase
         }
     }
 
@@ -432,7 +459,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    func beginShortcutEditing() { editingShortcut = true; shortcut.unregister() }
+    func beginShortcutEditing() { editingShortcut = true; shortcut.unregister(); shortcut.unregisterDiscard() }
 
     func endShortcutEditing(_ value: Shortcut?) {
         editingShortcut = false

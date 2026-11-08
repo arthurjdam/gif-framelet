@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Carbon.HIToolbox
 import ImageIO
 import RecorderCore
 import Synchronization
@@ -127,6 +128,13 @@ enum SelfChecks {
         try require(AppSettings(defaults: defaults).lastRegion == nil, "Clearing the last region must persist")
         try RegionSelector.checkPreselection()
         print("PASS: last region persistence round-trip and validity rules")
+
+        let discard = Shortcut.defaultShortcut.discardVariant
+        try require(discard?.modifiers == UInt32(cmdKey | shiftKey | optionKey) && discard?.keyCode == Shortcut.defaultShortcut.keyCode, "Discard must add Option to the shortcut")
+        try require(discard?.display == "\u{2325}\u{21e7}\u{2318}8", "Discard shortcut must display as Option-Shift-Command-8")
+        try require(discard?.discardVariant == nil, "A shortcut that already contains Option must have no discard variant")
+        try require(GlobalShortcut.stopID == 1 && GlobalShortcut.discardID == 2, "Hot-key ids must be stop = 1 and discard = 2")
+        print("PASS: discard shortcut adds Option, none when Option is already used; hot-key ids")
 
         let locked = directory.appendingPathComponent("locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o555])

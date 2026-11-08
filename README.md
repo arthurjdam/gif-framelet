@@ -46,6 +46,11 @@ can also be opened in Xcode. Quit the running app before rebuilding its bundle.
 5. Press the same global shortcut again, choose **Stop Recording** in Framelet's menu,
   or use macOS's native recording stop button. All three finalize the movie and
   export a GIF. The Framelet menu-bar icon shows elapsed recording time.
+   To throw a take away instead, choose **Discard Recording** or press the shortcut
+   with Option added (**Option-Command-Shift-8** by default). Nothing is exported, the
+   temporary movie is deleted, and any earlier recording kept for retry is left alone.
+   The Option shortcut is only active while recording. If your shortcut already uses
+   Option, or the variant can't be registered, discard from the menu instead.
 6. The optimized GIF is saved to **~/Desktop** by default and revealed in Finder.
 
 For a second take of the same area, choose **Record Last Region** in the menu bar: it

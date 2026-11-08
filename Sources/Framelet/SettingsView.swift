@@ -39,6 +39,7 @@ struct SettingsView: View {
                             ShortcutRecorder(controller: controller, shortcut: settings.shortcut)
                                 .frame(width: 150, height: 28)
                         }
+                        Text(settings.shortcut.discardHint).font(.caption).foregroundStyle(.secondary)
                         Button("Restore Default", systemImage: "arrow.counterclockwise") {
                             controller.endShortcutEditing(.defaultShortcut)
                         }
