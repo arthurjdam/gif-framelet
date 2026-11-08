@@ -84,7 +84,7 @@ final class AppController: ObservableObject {
             errorMessage = nil
             phase = .selecting
             settingsWindow?.orderOut(nil)
-            selector.show()
+            selector.show(maximumWidth: settings.maximumWidth)
         case .starting, .stopping, .exporting: break
         }
     }
