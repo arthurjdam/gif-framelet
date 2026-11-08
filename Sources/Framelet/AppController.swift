@@ -4,7 +4,7 @@ import RecorderCore
 
 @MainActor
 final class AppController: ObservableObject {
-    enum Phase { case idle, selecting, starting, recording, stopping, exporting, failed }
+    enum Phase { case idle, selecting, countingDown, starting, recording, stopping, exporting, failed }
     let settings = AppSettings()
     let shortcut = GlobalShortcut()
     private let selector = RegionSelector()
@@ -13,10 +13,12 @@ final class AppController: ObservableObject {
     private var timer: Timer?
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
+    private var countdownTask: Task<Void, Never>?
     private var cancellingStart = false
     @Published private(set) var phase = Phase.idle
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var countdownRemaining = 0
     @Published private(set) var exportProgress = 0.0
     @Published private(set) var exportStage = ExportStage.preparingFrames
     @Published private(set) var errorMessage: String?
@@ -30,6 +32,7 @@ final class AppController: ObservableObject {
         switch phase {
         case .idle: hasPermission ? "Ready to record" : "Screen Recording permission needed"
         case .selecting: "Selecting a region"
+        case .countingDown: "Recording in \(countdownRemaining)"
         case .starting: "Starting recording"
         case .recording: "Recording \(elapsedText)"
         case .stopping: "Finishing recording"
@@ -73,6 +76,7 @@ final class AppController: ObservableObject {
         switch phase {
         case .starting, .recording: stop()
         case .selecting: cancelSelection()
+        case .countingDown: cancelCountdown()
         case .idle, .failed:
             guard ensurePermission() else { showSettings(); return }
             guard GIFExporter.bundledEncoder != nil else {
@@ -111,8 +115,36 @@ final class AppController: ObservableObject {
         phase = restingPhase
     }
 
+    /// Cancels a running countdown. No recorder exists yet, so nothing else needs unwinding.
+    func cancelCountdown() {
+        guard phase == .countingDown else { return }
+        countdownTask?.cancel()
+        countdownTask = nil
+        selector.close()
+        phase = restingPhase
+    }
+
+    /// The overlay turns click-through and the previous app is reactivated; capture starts when the count reaches 0.
+    private func startCountdown(region: CaptureRegion, screen: NSScreen) {
+        phase = .countingDown
+        selector.setRecording(dimOutside: settings.dimOutside)
+        let seconds = settings.countdown
+        countdownTask = Task {
+            for remaining in stride(from: seconds, to: 0, by: -1) {
+                countdownRemaining = remaining
+                selector.setCountdown(remaining)
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, phase == .countingDown else { return }
+            }
+            countdownTask = nil
+            guard NSScreen.screens.contains(screen) else { cancelCountdown(); return }
+            start(region: region, screen: screen)
+        }
+    }
+
     private func start(region: CaptureRegion, screen: NSScreen) {
-        guard phase == .selecting else { return }
+        guard phase == .selecting || phase == .countingDown else { return }
+        if phase == .selecting && settings.countdown > 0 { startCountdown(region: region, screen: screen); return }
         phase = .starting
         let options = settings.exportOptions
         let recorder = ScreenRecorder()
@@ -174,6 +206,7 @@ final class AppController: ObservableObject {
     }
 
     func stop() {
+        if phase == .countingDown { cancelCountdown(); return }
         guard phase == .recording || phase == .starting, let recorder else { return }
         if phase == .starting {
             phase = .stopping
@@ -324,7 +357,8 @@ final class AppController: ObservableObject {
     }
 
     private func interruptCapture() {
-        if phase == .selecting { cancelSelection() }
+        cancelSelection()
+        cancelCountdown()
         if phase == .recording || phase == .starting { stop() }
     }
 
@@ -383,7 +417,8 @@ final class AppController: ObservableObject {
     }
 
     func canQuit() -> Bool {
-        if phase == .selecting { cancelSelection() }
+        cancelSelection()
+        cancelCountdown()
         guard [.starting, .recording, .stopping, .exporting].contains(phase), !(phase == .stopping && cancellingStart) else { return true }
         let alert = NSAlert()
         alert.messageText = phase == .exporting ? "A GIF is still being exported" : "A recording is in progress"

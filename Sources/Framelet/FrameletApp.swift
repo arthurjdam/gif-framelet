@@ -41,11 +41,14 @@ private struct MenuBarLabel: View {
                 .foregroundStyle(controller.phase == .recording ? Color.red : Color.primary)
             if controller.phase == .recording {
                 Text(controller.elapsedText).monospacedDigit()
+            } else if controller.phase == .countingDown {
+                Text("\(controller.countdownRemaining)").monospacedDigit()
             } else if controller.phase == .exporting {
                 Image(systemName: "ellipsis")
             }
         }
-        .accessibilityLabel(controller.phase == .recording ? "Framelet recording, \(controller.elapsedText)" : "Framelet")
+        .accessibilityLabel(controller.phase == .recording ? "Framelet recording, \(controller.elapsedText)"
+                            : controller.phase == .countingDown ? "Framelet recording in \(controller.countdownRemaining)" : "Framelet")
     }
 }
 
@@ -61,6 +64,8 @@ private struct RecorderMenu: View {
             Button("Record Region...  \(controller.settings.shortcut.display)", systemImage: "viewfinder") { controller.trigger() }
         case .selecting:
             Button("Cancel Selection", systemImage: "xmark") { controller.cancelSelection() }
+        case .countingDown:
+            Button("Cancel Countdown  \(controller.settings.shortcut.display)", systemImage: "xmark") { controller.cancelCountdown() }
         case .recording:
             Button("Stop Recording  \(controller.settings.shortcut.display)", systemImage: "stop.fill") { controller.stop() }
         case .starting:

@@ -14,6 +14,8 @@ final class AppSettings: ObservableObject {
     @Published var dimOutside: Bool { didSet { defaults.set(dimOutside, forKey: "dimOutside") } }
     @Published var maximumDuration: Int { didSet { defaults.set(maximumDuration, forKey: "maximumDuration") } }
     @Published var revealAfterExport: Bool { didSet { defaults.set(revealAfterExport, forKey: "revealAfterExport") } }
+    /// Seconds to count down before capture starts; 0 starts immediately.
+    @Published var countdown: Int { didSet { defaults.set(countdown, forKey: "countdown") } }
     @Published private(set) var outputDirectory: URL
     @Published private(set) var outputStatus = FolderStatus.ok
     @Published private(set) var shortcut: Shortcut
@@ -34,6 +36,7 @@ final class AppSettings: ObservableObject {
         dimOutside = defaults.bool(forKey: "dimOutside")
         maximumDuration = min(max(defaults.integer(forKey: "maximumDuration"), 15), 120)
         revealAfterExport = defaults.bool(forKey: "revealAfterExport")
+        countdown = [3, 5].contains(defaults.integer(forKey: "countdown")) ? defaults.integer(forKey: "countdown") : 0
         let bookmark = defaults.data(forKey: "outputBookmark")
         var stale = false
         if let bookmark, let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI], bookmarkDataIsStale: &stale) {
