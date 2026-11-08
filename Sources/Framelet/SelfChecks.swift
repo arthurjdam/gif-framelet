@@ -52,6 +52,13 @@ enum SelfChecks {
         try require(FileManager.default.fileExists(atPath: movie.path), "Destination failure must preserve the original")
         print("PASS: destination failure preserves original for retry")
 
+        try require(RecoveryInfo.read(besides: movie) == nil, "A missing recovery sidecar must read as nil")
+        try RecoveryInfo(fps: 25).write(besides: movie)
+        try require(RecoveryInfo.read(besides: movie) == RecoveryInfo(fps: 25), "Recovery sidecar must round-trip the capture fps")
+        try Data("not json".utf8).write(to: RecoveryInfo.url(besides: movie))
+        try require(RecoveryInfo.read(besides: movie) == nil, "A corrupt recovery sidecar must read as nil")
+        print("PASS: recovery sidecar write/read round-trip")
+
         let suiteName = "FrameletChecks-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }

@@ -13,7 +13,6 @@ final class AppController: ObservableObject {
     private var timer: Timer?
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
-    private var recordingOptions: ExportOptions?
     @Published private(set) var phase = Phase.idle
     @Published private(set) var hasPermission = false
     @Published private(set) var elapsed: TimeInterval = 0
@@ -74,18 +73,34 @@ final class AppController: ObservableObject {
         case .recording: stop()
         case .selecting: cancelSelection()
         case .idle, .failed:
-            guard recoveryMovie == nil else { showSettings(); return }
             guard ensurePermission() else { showSettings(); return }
             guard GIFExporter.bundledEncoder != nil else {
                 fail("The bundled GIF encoder is missing. Build and launch Framelet.app with scripts/build-app.sh, not swift run.")
                 showSettings()
                 return
             }
+            guard recoveryMovie == nil || confirmReplacingRecovery() else { return }
             errorMessage = nil
             phase = .selecting
             settingsWindow?.orderOut(nil)
             selector.show()
         case .starting, .stopping, .exporting: break
+        }
+    }
+
+    /// Framelet keeps one recovery. Asked before the selector opens; the previous take is only deleted once a new movie exists.
+    private func confirmReplacingRecovery() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Keep previous recording for retry?"
+        alert.informativeText = "Framelet keeps one recording for retry. The previous recording is deleted once the new one is captured. To keep it, reveal it and copy it elsewhere before recording."
+        alert.addButton(withTitle: "Record and Replace")
+        alert.addButton(withTitle: "Reveal Previous")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return true
+        case .alertSecondButtonReturn: revealRecovery(); return false
+        default: return false
         }
     }
 
@@ -99,7 +114,6 @@ final class AppController: ObservableObject {
         guard phase == .selecting else { return }
         phase = .starting
         let options = settings.exportOptions
-        recordingOptions = options
         let recorder = ScreenRecorder()
         self.recorder = recorder
         recorder.onStopRequested = { [weak self] in self?.stop() }
@@ -119,6 +133,7 @@ final class AppController: ObservableObject {
         Task {
             do {
                 try await recorder.start(region: region, screen: screen, fps: options.fps, maximumWidth: options.maximumWidth, showsCursor: settings.showsCursor)
+                if let movie = recorder.movieURL { try? RecoveryInfo(fps: options.fps).write(besides: movie) }
                 guard phase == .starting else { return }
                 phase = .recording
                 elapsed = 0
@@ -151,9 +166,7 @@ final class AppController: ObservableObject {
             do {
                 let movie = try await recorder.stop()
                 self.recorder = nil
-                recoveryMovie = movie
-                UserDefaults.standard.set(movie.path, forKey: "recoveryMovie")
-                retryExport()
+                export(movie)
             } catch {
                 preserveMovieIfPresent(recorder.movieURL)
                 self.recorder = nil
@@ -164,12 +177,24 @@ final class AppController: ObservableObject {
 
     private func preserveMovieIfPresent(_ url: URL?) {
         guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
-        recoveryMovie = url
-        UserDefaults.standard.set(url.path, forKey: "recoveryMovie")
+        keepForRetry(url)
+    }
+
+    /// The new take becomes the single recovery; the user agreed to replace any previous one in trigger().
+    private func keepForRetry(_ movie: URL) {
+        guard movie != recoveryMovie else { return }
+        removeRecovery()
+        recoveryMovie = movie
+        UserDefaults.standard.set(movie.path, forKey: "recoveryMovie")
     }
 
     func retryExport() {
-        guard phase != .exporting, let movie = recoveryMovie else { return }
+        guard !isBusy, let movie = recoveryMovie else { return }
+        export(movie)
+    }
+
+    private func export(_ movie: URL) {
+        keepForRetry(movie)
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
         phase = .exporting
         errorMessage = nil
@@ -177,7 +202,8 @@ final class AppController: ObservableObject {
         exportStage = "Preparing frames"
         let outputDirectory = settings.outputDirectory
         let selected = settings.exportOptions
-        let options = ExportOptions(fps: recordingOptions?.fps ?? selected.fps, maximumWidth: selected.maximumWidth,
+        let fps = RecoveryInfo.read(besides: movie)?.fps ?? selected.fps
+        let options = ExportOptions(fps: fps, maximumWidth: selected.maximumWidth,
                                     quality: selected.quality, fast: selected.fast, loops: selected.loops)
         exportTask = Task {
             do {
@@ -206,6 +232,7 @@ final class AppController: ObservableObject {
     func revealRecovery() { if let recoveryMovie { NSWorkspace.shared.activateFileViewerSelecting([recoveryMovie]) } }
 
     func discardRecovery() {
+        guard !isBusy else { return }
         let alert = NSAlert()
         alert.messageText = "Discard this recording?"
         alert.informativeText = "The temporary original will be deleted. This cannot be undone."
@@ -237,7 +264,6 @@ final class AppController: ObservableObject {
             if directory.lastPathComponent.hasPrefix("Framelet-") { try? FileManager.default.removeItem(at: directory) }
         }
         recoveryMovie = nil
-        recordingOptions = nil
         UserDefaults.standard.removeObject(forKey: "recoveryMovie")
     }
 

@@ -69,8 +69,14 @@ overwriting previous exports.
 
 Temporary frames are removed after export or cancellation. A failed/cancelled
 export retains the original movie for retry, including after a normal app restart.
-The recovery menu can reveal or explicitly discard it. The original is deleted
-after successful export. Recovery lives in macOS temporary storage, so it is not a
+A `recovery.json` sidecar written next to the movie when capture starts records the
+capture frame rate, so a retry after relaunch uses the fps the movie was recorded
+at (older recoveries without it use the current setting). The recovery menu can
+reveal or explicitly discard it. Framelet keeps one recovery: a pending recovery
+does not block recording, but Framelet first asks whether to replace it (or reveal
+it so you can copy it elsewhere). The previous recording is deleted only once the
+new one has been captured, so cancelling the selection keeps it. The original is
+deleted after successful export. Recovery lives in macOS temporary storage, so it is not a
 long-term backup. Interrupted capture may produce an incomplete movie. Large or
 long captures can need substantial temporary disk space.
 
