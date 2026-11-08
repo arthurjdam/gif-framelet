@@ -1,10 +1,11 @@
 import AppKit
+import CoreMedia
 import SwiftUI
 import RecorderCore
 
 @MainActor
 final class AppController: ObservableObject {
-    enum Phase { case idle, selecting, countingDown, starting, recording, stopping, exporting, failed }
+    enum Phase { case idle, selecting, countingDown, starting, recording, stopping, previewing, exporting, failed }
     let settings = AppSettings()
     let shortcut = GlobalShortcut()
     private let selector = RegionSelector()
@@ -14,6 +15,7 @@ final class AppController: ObservableObject {
     private var startedAt: Date?
     private var exportTask: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
+    private var preview: PreviewWindow?
     private var cancellingStart = false
     @Published private(set) var phase = Phase.idle {
         didSet {
@@ -42,6 +44,7 @@ final class AppController: ObservableObject {
         case .starting: "Starting recording"
         case .recording: "Recording \(elapsedText)"
         case .stopping: "Finishing recording"
+        case .previewing: "Previewing recording"
         case .exporting: exportStage == .preparingFrames ? "\(exportStage.title) \(Int(exportProgress * 100))%" : exportStage.title
         case .failed: recoveryMovie == nil ? "Recording unavailable" : "Recording saved for retry"
         }
@@ -89,6 +92,7 @@ final class AppController: ObservableObject {
             phase = .selecting
             settingsWindow?.orderOut(nil)
             selector.show(maximumWidth: settings.maximumWidth, preselect: lastRegion?.region)
+        case .previewing: preview?.show()
         case .stopping, .exporting: break
         }
     }
@@ -265,7 +269,7 @@ final class AppController: ObservableObject {
                     fail("The recording contains no usable video." + (recoveryMovie == nil ? " Record for a little longer and try again." : " The previous recording is still available for retry."))
                     return
                 }
-                export(movie)
+                if settings.previewBeforeExport { showPreview(movie) } else { export(movie) }
             } catch {
                 if let movie = recorder.movieURL { _ = await keepForRetry(movie) }
                 self.recorder = nil
@@ -320,7 +324,35 @@ final class AppController: ObservableObject {
         export(movie)
     }
 
-    private func export(_ movie: URL) {
+    /// Opens the preview between keepForRetry and export. The take is already the recovery, so closing keeps it for retry.
+    private func showPreview(_ movie: URL) {
+        phase = .previewing
+        let preview = PreviewWindow(movie: movie, options: exportOptions(for: movie))
+        preview.onFinish = { [weak self] choice in self?.finishPreview(choice) }
+        self.preview = preview
+        preview.show()
+    }
+
+    /// The window has stopped and released its player before this runs, so the take can be deleted or read.
+    private func finishPreview(_ choice: PreviewWindow.Choice) {
+        preview = nil
+        guard phase == .previewing else { return }
+        guard let movie = recoveryMovie else { phase = restingPhase; return }
+        switch choice {
+        case .export(let range): export(movie, range: range)
+        case .discard: removeRecovery(); errorMessage = nil; phase = restingPhase
+        case .keep: phase = restingPhase
+        }
+    }
+
+    /// Export settings, with the fps the take was captured at.
+    private func exportOptions(for movie: URL) -> ExportOptions {
+        let selected = settings.exportOptions
+        return ExportOptions(fps: RecoveryInfo.read(besides: movie)?.fps ?? selected.fps, maximumWidth: selected.maximumWidth,
+                             quality: selected.quality, fast: selected.fast, loops: selected.loops)
+    }
+
+    private func export(_ movie: URL, range: CMTimeRange? = nil) {
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
         settings.refreshOutputStatus()
         if let problem = settings.outputProblem {
@@ -333,13 +365,10 @@ final class AppController: ObservableObject {
         exportProgress = 0
         exportStage = .preparingFrames
         let outputDirectory = settings.outputDirectory
-        let selected = settings.exportOptions
-        let fps = RecoveryInfo.read(besides: movie)?.fps ?? selected.fps
-        let options = ExportOptions(fps: fps, maximumWidth: selected.maximumWidth,
-                                    quality: selected.quality, fast: selected.fast, loops: selected.loops)
+        let options = exportOptions(for: movie)
         exportTask = Task {
             do {
-                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options) { progress, stage in
+                let url = try await GIFExporter.export(movie: movie, directory: outputDirectory, encoder: encoder, options: options, range: range) { progress, stage in
                     await MainActor.run {
                         self.exportProgress = progress
                         self.exportStage = stage

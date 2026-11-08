@@ -16,6 +16,7 @@ final class AppSettings: ObservableObject {
     @Published var revealAfterExport: Bool { didSet { defaults.set(revealAfterExport, forKey: "revealAfterExport") } }
     /// Seconds to count down before capture starts; 0 starts immediately.
     @Published var countdown: Int { didSet { defaults.set(countdown, forKey: "countdown") } }
+    @Published var previewBeforeExport: Bool { didSet { defaults.set(previewBeforeExport, forKey: "previewBeforeExport") } }
     @Published private(set) var outputDirectory: URL
     @Published private(set) var outputStatus = FolderStatus.ok
     @Published private(set) var shortcut: Shortcut
@@ -26,7 +27,7 @@ final class AppSettings: ObservableObject {
         defaults.register(defaults: [
             "fps": 15, "maximumWidth": 1280, "quality": 80.0, "fast": false,
             "loops": true, "showsCursor": true, "dimOutside": true,
-            "maximumDuration": 60, "revealAfterExport": true
+            "maximumDuration": 60, "revealAfterExport": true, "previewBeforeExport": true
         ])
         fps = defaults.integer(forKey: "fps")
         maximumWidth = defaults.integer(forKey: "maximumWidth")
@@ -38,6 +39,7 @@ final class AppSettings: ObservableObject {
         maximumDuration = min(max(defaults.integer(forKey: "maximumDuration"), 15), 120)
         revealAfterExport = defaults.bool(forKey: "revealAfterExport")
         countdown = [3, 5].contains(defaults.integer(forKey: "countdown")) ? defaults.integer(forKey: "countdown") : 0
+        previewBeforeExport = defaults.bool(forKey: "previewBeforeExport")
         let bookmark = defaults.data(forKey: "outputBookmark")
         var stale = false
         if let bookmark, let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI], bookmarkDataIsStale: &stale) {
