@@ -171,6 +171,12 @@ final class AppController: ObservableObject {
     func retryExport() {
         guard phase != .exporting, let movie = recoveryMovie else { return }
         guard let encoder = GIFExporter.bundledEncoder else { fail("The bundled gifski encoder is missing."); return }
+        settings.refreshOutputStatus()
+        if let problem = settings.outputProblem {
+            fail(problem)
+            Task { self.offerDirectoryChoice(problem) }
+            return
+        }
         phase = .exporting
         errorMessage = nil
         exportProgress = 0
@@ -196,9 +202,24 @@ final class AppController: ObservableObject {
                 fail("Export cancelled. The original recording is available for retry.")
                 exportTask = nil
             } catch {
-                fail(error.localizedDescription)
+                settings.refreshOutputStatus()
+                fail(settings.outputProblem ?? error.localizedDescription)
                 exportTask = nil
             }
+        }
+    }
+
+    private func offerDirectoryChoice(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Framelet can't save the GIF"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Choose Folder...")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn {
+            showSettings()
+            chooseDirectory()
         }
     }
 
@@ -258,6 +279,7 @@ final class AppController: ObservableObject {
     }
 
     func showSettings() {
+        settings.refreshOutputStatus()
         if settingsWindow == nil {
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 520, height: 540),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
